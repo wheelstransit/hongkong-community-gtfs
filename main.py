@@ -1,6 +1,6 @@
 from src.common.database import get_db_engine
-#from src.ingest import kmb_client, gov_gtfs_client
-from src.processing.load_raw_data import process_and_load_kmb_data, process_and_load_gov_data # Add the new function
+from src.ingest import kmb_client#, gov_gtfs_client
+from src.processing.load_raw_data import process_and_load_kmb_data#, process_and_load_gov_data
 
 def main():
     print("--- Starting Data Pipeline ---")
