@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/logomark-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="images/logomark-light.png">
-  <img alt="Hong Kong Community GTFS" src="images/logomark-light.png" style="height: min(64px, 12vw); width: auto; max-width: 100%;">
+  <img alt="Hong Kong Community GTFS" src="images/logomark-light.png" style="height: min(64px, 12vw); width: auto; max-width: 100%; max-height: min(64px, 12vw);">
 </picture>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -21,6 +21,8 @@ Instead of manual editing, this project generates the feeds **procedurally**. We
 ## Quality
 The primary motivation for this project is the poor quality of existing data. Therefore, our core mission is to produce the most accurate, complete, and reliable GTFS feed possible for Hong Kong. **We pursue the best and finest quality not as a feature, but as a fundamental requirement.**
 
+## Hosted GTFS
+Sponsored by Wheels
 
 ## License
 This code of the project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
