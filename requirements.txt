@@ -3,3 +3,4 @@ geopandas
 requests
 sqlalchemy
 psycopg2-binary
+geoalchemy2
