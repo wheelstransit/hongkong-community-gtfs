@@ -13,7 +13,7 @@ An open-source, community-driven project to generate accurate and up-to-date pro
 Public transport data provided by official sources in Hong Kong is often fragmented, inaccurate, or incomplete. This project aims to solve that problem by creating a single, high-quality, and reliable set of GTFS feeds.
 
 ## Who?
-Currently *the code of* Hong Kong Community GTFS is maintained by Wheels, an upcoming transit app by riders, for riders. For more information on Wheels, follow [@anscg_](threads.com/anscg_) 😉
+Currently *the code of* Hong Kong Community GTFS is maintained by Wheels, an upcoming transit app by riders, for riders. For more information on Wheels, follow [@anscg_](https://threads.com/anscg_) 😉
 
 ## How
 Instead of manual editing, this project generates the feeds **procedurally**. We combine data from open sources like OpenStreetMap with official data from portals like `data.gov.hk` to algorithmically build the GTFS files. This makes the process transparent, repeatable, and easier to keep up-to-date.
