@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/logomark-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="images/logomark-light.png">
-  <img alt="Hong Kong Community GTFS" src="images/logomark-light.png" style="height: min(64px, 12vw); width: auto; max-width: 100%; max-height: min(64px, 12vw);">
+  <img alt="Hong Kong Community GTFS" src="images/logomark-light.png" style="height: min(64px, 12vw); width: auto; max-height: min(64px, 12vw);">
 </picture>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
