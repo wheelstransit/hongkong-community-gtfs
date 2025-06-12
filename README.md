@@ -14,8 +14,9 @@ Currently *the code of* Hong Kong Community GTFS is maintained by Wheels, an upc
 Instead of manual editing, this project generates the feeds **procedurally**. We combine data from open sources like OpenStreetMap with official data from portals like `data.gov.hk` to algorithmically build the GTFS files. This makes the process transparent, repeatable, and easier to keep up-to-date.
 
 ## License
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+This code of the project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
 
+However, the data produced by this project is a derivative of multiple sources and is licensed under the **Open Database License (ODbL)**.
 
 ## Data Source Attribution
 
