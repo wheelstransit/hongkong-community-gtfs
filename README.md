@@ -1,4 +1,9 @@
-# Hong Kong Community GTFS
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/logomark-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="images/logomark-light.png">
+  <img alt="Hong Kong Community GTFS" src="images/logomark-light.png" height="64">
+</picture>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Project Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#)
 
