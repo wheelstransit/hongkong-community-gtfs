@@ -4,3 +4,4 @@ requests
 sqlalchemy
 psycopg2-binary
 geoalchemy2
+tqdm
