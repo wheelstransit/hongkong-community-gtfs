@@ -78,3 +78,23 @@ if __name__ == '__main__':
     print("-" * 20)
 
     print("done testing :)")
+
+"""
+testing :)
+Fetching all KMB routes...
+Successfully fetched 1560 routes.
+Sample route data:
+{'route': '1', 'bound': 'O', 'service_type': '1', 'orig_en': 'CHUK YUEN ESTATE', 'orig_tc': '竹園邨', 'orig_sc': '竹园邨', 'dest_en': 'STAR FERRY', 'dest_tc': '尖沙咀碼頭', 'dest_sc': '尖沙咀码头'}
+--------------------
+Fetching all KMB stops...
+Successfully fetched 6648 stops.
+Sample stop data:
+{'stop': '18492910339410B1', 'name_en': 'CHUK YUEN ESTATE BUS TERMINUS (WT916)', 'name_tc': '竹園邨總站 (WT916)', 'name_sc': '竹园邨总站 (WT916)', 'lat': '22.345415', 'long': '114.192640'}
+--------------------
+Fetching all KMB route-stop sequences...
+Successfully fetched 35273 route-stop records.
+Sample route-stop data:
+{'route': '1', 'bound': 'O', 'service_type': '1', 'seq': '1', 'stop': '18492910339410B1'}
+--------------------
+done testing :)
+"""

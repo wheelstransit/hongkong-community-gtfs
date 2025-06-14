@@ -103,3 +103,28 @@ if __name__ == '__main__':
             
     end_time = time.time()
     print("done testing :)")
+
+"""
+testing :)
+Fetching all Citybus routes...
+Successfully fetched 400 routes.
+
+Sample route data:
+{'co': 'CTB', 'route': '1', 'orig_tc': '中環 (港澳碼頭)', 'orig_en': 'Central (Macau Ferry)', 'dest_tc': '跑馬地 (上)', 'dest_en': 'Happy Valley (Upper)', 'orig_sc': '中环 (港澳码头)', 'dest_sc': '跑马地 (上)', 'data_timestamp': '2025-06-14T05:00:02+08:00'}
+--------------------
+
+Fetching all unique stop IDs with up to 30 threads:>
+Fetching all Citybus routes...
+Successfully fetched 400 routes.
+Processing routes: 100%
+
+Successfully found 2558 unique stop IDs across all routes.
+
+Sample of fetched stop IDs:
+['001001', '001002', '001003', '001004', '001005']
+
+Fetching details for a sample stop...
+Sample stop detail data:
+{'stop': '001001', 'name_tc': '中央廣場, 亞畢諾道', 'name_en': 'The Centrium, Arbuthnot Road', 'lat': '22.279916732091', 'long': '114.15458450053', 'name_sc': '中央广场, 亚毕诺道', 'data_timestamp': '2025-06-14T05:00:02+08:00'}
+done testing :)
+"""
