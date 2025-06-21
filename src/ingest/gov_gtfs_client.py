@@ -70,7 +70,7 @@ def fetch_calendar_data():
         return None
 
 if __name__ == '__main__':
-    print("testing :)")
+    print("testing")
 
     headway_data = fetch_frequencies_data()
     if headway_data:

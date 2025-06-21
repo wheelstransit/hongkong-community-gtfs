@@ -21,6 +21,9 @@ Instead of manual editing, this project generates the feeds **procedurally**. We
 ## Quality
 The primary motivation for this project is the poor quality of existing data. Therefore, our core mission is to produce the most accurate, complete, and reliable GTFS feed possible for Hong Kong. **We pursue the best and finest quality not as a feature, but as a fundamental requirement.**
 
+## Credits
+HK-Bus-ETA/hk-bus-time-between-stops
+
 ## Hosted GTFS
 Sponsored by Wheels
 

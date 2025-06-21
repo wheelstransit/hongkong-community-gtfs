@@ -1,5 +1,5 @@
 from src.common.database import get_db_engine
-from src.ingest import kmb_client, citybus_client, gov_gtfs_client,gov_csdi_client,gmb_client, mtrbus_client, nlb_client
+from src.ingest import kmb_client, citybus_client, gov_gtfs_client,gov_csdi_client,gmb_client, mtrbus_client, nlb_client, journey_time_client
 from src.processing.load_raw_data import (
     process_and_load_kmb_data,
     process_and_load_gmb_data,
@@ -9,11 +9,10 @@ from src.processing.load_raw_data import (
 )
 
 def main():
-    print("--- Starting Data Pipeline ---")
+    print("Starting")
     engine = get_db_engine()
 
     # INGEST
-    print("\n--- Starting Ingest Phase ---")
     # KMB
     raw_kmb_routes = kmb_client.fetch_all_routes()
     raw_kmb_stops = kmb_client.fetch_all_stops()
@@ -47,10 +46,15 @@ def main():
     raw_nlb_routes = nlb_client.fetch_all_routes()
     raw_nlb_stops, raw_nlb_route_stops = nlb_client.fetch_all_stops_and_route_stops_threaded()
 
-    print("--- Ingest Phase Complete ---\n")
+    # CSDI
+    raw_CSDI_data = gov_csdi_client.fetch_bus_routes_data()
+
+    # Journey Time
+    raw_journey_time_data = journey_time_client.fetch_all_journey_time_data()
+    raw_hourly_journey_time_data = journey_time_client.fetch_all_hourly_journey_time_data()
 
     # PROCESS
-    print("--- Starting Process & Load (Staging) Phase ---")
+    print("processing data")
 
     process_and_load_kmb_data(
         raw_routes=raw_kmb_routes,
@@ -88,7 +92,7 @@ def main():
         engine=engine
     )
 
-    print("--- Process & Load (Staging) Phase Complete ---\n")
+    print("processing complete")
 
 
 if __name__ == "__main__":
