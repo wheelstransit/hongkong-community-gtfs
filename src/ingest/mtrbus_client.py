@@ -20,10 +20,10 @@ def fetch_and_parse_csv(url, data_name="data"):
         decoded_content = html.unescape(raw_text)
 
         csv_file = io.StringIO(decoded_content)
-        
+
         reader = csv.DictReader(csv_file)
         data = list(reader)
-        
+
         print(f"Successfully fetched and parsed {len(data)} records for {data_name}.")
         return data
 
@@ -65,7 +65,7 @@ def fetch_all_stops():
                 'lat': row.get('STATION_LATITUDE'),
                 'long': row.get('STATION_LONGITUDE'),
             }
-    
+
     unique_stops_list = list(unique_stops.values())
     print(f"Successfully identified {len(unique_stops_list)} unique stops.")
     return unique_stops_list
@@ -97,7 +97,7 @@ if __name__ == '__main__':
         print("\nSample fare data:")
         print(fares_data[0])
     print("-" * 30)
-    
+
     print("done testing :)")
 
 """
