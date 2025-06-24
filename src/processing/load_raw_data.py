@@ -1,6 +1,8 @@
 import pandas as pd
 import geopandas as gpd
 from sqlalchemy.engine import Engine
+from shapely import wkt
+import json
 
 def process_and_load_kmb_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine):
     if not all([raw_routes, raw_stops, raw_route_stops]):
@@ -60,7 +62,7 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
                 'route_code': route_code,
                 'unique_route_id': f"{region}_{route_code}"
             })
-    
+
     routes_df = pd.DataFrame(flattened_routes)
     routes_df.to_sql('gmb_routes', engine, if_exists='replace', index=False)
     print(f"Loaded {len(routes_df)} records into 'gmb_routes' table.")
@@ -71,7 +73,7 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     stops_df['lat'] = stops_df['coordinates'].apply(lambda x: x['wgs84']['latitude'] if x and 'wgs84' in x else None)
     stops_df['long'] = stops_df['coordinates'].apply(lambda x: x['wgs84']['longitude'] if x and 'wgs84' in x else None)
     stops_df = stops_df.drop(columns=['coordinates'])
-    
+
     stops_gdf = gpd.GeoDataFrame(
         stops_df,
         geometry=gpd.points_from_xy(stops_df.long, stops_df.lat),
@@ -120,8 +122,8 @@ def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_st
     print(f"Loaded {len(fares_df)} records into 'mtrbus_fares' table.")
 
 def process_and_load_citybus_data(raw_routes: list, raw_stops: list, raw_stop_details: list, engine: Engine):
-    if not all([raw_routes, raw_stops, raw_stop_details]):
-        print("One or more Citybus raw data lists are empty. Aborting Citybus data processing.")
+    if not raw_routes or not raw_stop_details:
+        print("Citybus routes or stop details are empty. Aborting Citybus data processing.")
         return
 
     print("Processing Citybus routes...")
@@ -141,10 +143,13 @@ def process_and_load_citybus_data(raw_routes: list, raw_stops: list, raw_stop_de
     stops_gdf.to_postgis('citybus_stops', engine, if_exists='replace', index=False)
     print(f"Loaded {len(stops_gdf)} records into spatial table 'citybus_stops'.")
 
-    print("Processing Citybus route-stop sequences...")
-    route_stops_df = pd.DataFrame(raw_stops)
-    route_stops_df.to_sql('citybus_stop_sequences', engine, if_exists='replace', index=False)
-    print(f"Loaded {len(route_stops_df)} records into 'citybus_stop_sequences' table.")
+    if raw_stops:
+        print("Processing Citybus route-stop sequences...")
+        route_stops_df = pd.DataFrame(raw_stops)
+        route_stops_df.to_sql('citybus_stop_sequences', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(route_stops_df)} records into 'citybus_stop_sequences' table.")
+    else:
+        print("No Citybus route-stop sequence data available, skipping...")
 
 def process_and_load_nlb_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine):
     if not all([raw_routes, raw_stops, raw_route_stops]):
@@ -173,3 +178,150 @@ def process_and_load_nlb_data(raw_routes: list, raw_stops: list, raw_route_stops
     route_stops_df.to_sql('nlb_stop_sequences', engine, if_exists='replace', index=False)
     print(f"Loaded {len(route_stops_df)} records into 'nlb_stop_sequences' table.")
 
+def process_and_load_gov_gtfs_data(raw_frequencies: list, raw_trips: list, raw_routes: list,
+                                   raw_calendar: list, raw_fares: dict, engine: Engine):
+    """Process and load Government GTFS data into the database."""
+    if not any([raw_frequencies, raw_trips, raw_routes, raw_calendar, raw_fares]):
+        print("All Government GTFS raw data lists are empty. Aborting Government GTFS data processing.")
+        return
+
+    if raw_frequencies:
+        print("Processing Government GTFS frequencies...")
+        frequencies_df = pd.DataFrame(raw_frequencies)
+        frequencies_df.to_sql('gov_gtfs_frequencies', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(frequencies_df)} records into 'gov_gtfs_frequencies' table.")
+
+    if raw_trips:
+        print("Processing Government GTFS trips...")
+        trips_df = pd.DataFrame(raw_trips)
+        trips_df.to_sql('gov_gtfs_trips', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(trips_df)} records into 'gov_gtfs_trips' table.")
+
+    if raw_routes:
+        print("Processing Government GTFS routes...")
+        routes_df = pd.DataFrame(raw_routes)
+        routes_df.to_sql('gov_gtfs_routes', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(routes_df)} records into 'gov_gtfs_routes' table.")
+
+    if raw_calendar:
+        print("Processing Government GTFS calendar...")
+        calendar_df = pd.DataFrame(raw_calendar)
+        calendar_df.to_sql('gov_gtfs_calendar', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(calendar_df)} records into 'gov_gtfs_calendar' table.")
+
+    if raw_fares:
+        if raw_fares.get('attributes'):
+            print("Processing Government GTFS fare attributes...")
+            fare_attributes_df = pd.DataFrame(raw_fares['attributes'])
+            fare_attributes_df.to_sql('gov_gtfs_fare_attributes', engine, if_exists='replace', index=False)
+            print(f"Loaded {len(fare_attributes_df)} records into 'gov_gtfs_fare_attributes' table.")
+
+        if raw_fares.get('rules'):
+            print("Processing Government GTFS fare rules...")
+            fare_rules_df = pd.DataFrame(raw_fares['rules'])
+            fare_rules_df.to_sql('gov_gtfs_fare_rules', engine, if_exists='replace', index=False)
+            print(f"Loaded {len(fare_rules_df)} records into 'gov_gtfs_fare_rules' table.")
+
+def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine):
+    """Process and load CSDI bus routes data into the database."""
+    if not raw_csdi_data:
+        print("CSDI raw data list is empty. Aborting CSDI data processing.")
+        return
+
+    try:
+        print(f"Processing CSDI bus routes data... ({len(raw_csdi_data)} records)")
+        csdi_df = pd.DataFrame(raw_csdi_data)
+        print(f"Created DataFrame with columns: {list(csdi_df.columns)}")
+
+        # Convert WKT geometry strings back to geometry objects if they exist
+        if 'geometry' in csdi_df.columns:
+            print("Converting WKT geometry strings to geometry objects...")
+            # Check for null/empty geometries first
+            null_geoms = csdi_df['geometry'].isna().sum()
+            if null_geoms > 0:
+                print(f"Warning: Found {null_geoms} null geometries")
+
+            # Process geometries in smaller batches to avoid memory issues
+            batch_size = 500
+            total_batches = (len(csdi_df) + batch_size - 1) // batch_size
+
+            processed_geometries = []
+            for i in range(0, len(csdi_df), batch_size):
+                batch_num = (i // batch_size) + 1
+                print(f"Processing geometry batch {batch_num}/{total_batches}...")
+                batch = csdi_df.iloc[i:i+batch_size]
+                batch_geoms = batch['geometry'].apply(lambda x: wkt.loads(x) if pd.notna(x) and x else None)
+                processed_geometries.extend(batch_geoms.tolist())
+
+            csdi_df['geometry'] = processed_geometries
+            print("Creating GeoDataFrame...")
+            csdi_gdf = gpd.GeoDataFrame(csdi_df, crs="EPSG:4326")
+
+            print("Saving to PostGIS...")
+            csdi_gdf.to_postgis('csdi_bus_routes', engine, if_exists='replace', index=False)
+            print(f"Loaded {len(csdi_gdf)} records into spatial table 'csdi_bus_routes'.")
+        else:
+            print("No geometry column found, saving as regular table...")
+            csdi_df.to_sql('csdi_bus_routes', engine, if_exists='replace', index=False)
+            print(f"Loaded {len(csdi_df)} records into 'csdi_bus_routes' table.")
+    except Exception as e:
+        print(f"Error processing CSDI data: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        # Try to save without geometry as fallback
+        try:
+            print("Attempting to save without geometry data as fallback...")
+            csdi_df_no_geom = pd.DataFrame(raw_csdi_data)
+            if 'geometry' in csdi_df_no_geom.columns:
+                csdi_df_no_geom = csdi_df_no_geom.drop(columns=['geometry'])
+            csdi_df_no_geom.to_sql('csdi_bus_routes_no_geom', engine, if_exists='replace', index=False)
+            print(f"Loaded {len(csdi_df_no_geom)} records into 'csdi_bus_routes_no_geom' table (without geometry).")
+        except Exception as fallback_e:
+            print(f"Fallback also failed: {str(fallback_e)}")
+
+def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_journey_time_data: dict, engine: Engine):
+    """Process and load journey time data into the database."""
+    if not any([raw_journey_time_data, raw_hourly_journey_time_data]):
+        print("Journey time raw data is empty. Aborting journey time data processing.")
+        return
+
+    if raw_journey_time_data:
+        print("Processing journey time data...")
+        # Flatten the nested structure: from_stop_id -> to_stop_id -> travel_time_seconds
+        flattened_data = []
+        for from_stop_id, destinations in raw_journey_time_data.items():
+            if isinstance(destinations, dict):
+                for to_stop_id, travel_time_seconds in destinations.items():
+                    flattened_data.append({
+                        'from_stop_id': from_stop_id,
+                        'to_stop_id': to_stop_id,
+                        'travel_time_seconds': travel_time_seconds
+                    })
+
+        if flattened_data:
+            journey_time_df = pd.DataFrame(flattened_data)
+            journey_time_df.to_sql('journey_time_data', engine, if_exists='replace', index=False)
+            print(f"Loaded {len(journey_time_df)} records into 'journey_time_data' table.")
+
+    if raw_hourly_journey_time_data:
+        print("Processing hourly journey time data...")
+        # Flatten the nested structure: weekday -> hour -> from_stop_id -> to_stop_id -> travel_time_seconds
+        flattened_hourly_data = []
+        for weekday, weekday_data in raw_hourly_journey_time_data.items():
+            if isinstance(weekday_data, dict):
+                for hour, hour_data in weekday_data.items():
+                    if isinstance(hour_data, dict):
+                        for from_stop_id, destinations in hour_data.items():
+                            if isinstance(destinations, dict):
+                                for to_stop_id, travel_time_seconds in destinations.items():
+                                    flattened_hourly_data.append({
+                                        'weekday': weekday,
+                                        'hour': hour,
+                                        'from_stop_id': from_stop_id,
+                                        'to_stop_id': to_stop_id,
+                                        'travel_time_seconds': travel_time_seconds
+                                    })
+
+        if flattened_hourly_data:
+            hourly_journey_time_df = pd.DataFrame(flattened_hourly_data)
+            hourly_journey_time_df.to_sql('hourly_journey_time_data', engine, if_exists='replace', index=False)
+            print(f"Loaded {len(hourly_journey_time_df)} records into 'hourly_journey_time_data' table.")

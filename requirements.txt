@@ -5,3 +5,8 @@ sqlalchemy
 psycopg2-binary
 geoalchemy2
 tqdm
+osmnx
+shapely
+rtree
+networkx
+scikit-learn
