@@ -224,6 +224,8 @@ def process_and_load_gov_gtfs_data(raw_frequencies: list, raw_trips: list, raw_r
 
 def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine):
     """Process and load CSDI bus routes data into the database."""
+    from tqdm import tqdm
+
     if not raw_csdi_data:
         print("CSDI raw data list is empty. Aborting CSDI data processing.")
         return
@@ -242,7 +244,7 @@ def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine):
                 print(f"Warning: Found {null_geoms} null geometries")
 
             # Process geometries in smaller batches to avoid memory issues
-            batch_size = 500
+            batch_size = 200
             total_batches = (len(csdi_df) + batch_size - 1) // batch_size
 
             processed_geometries = []
@@ -258,8 +260,46 @@ def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine):
             csdi_gdf = gpd.GeoDataFrame(csdi_df, crs="EPSG:4326")
 
             print("Saving to PostGIS...")
-            csdi_gdf.to_postgis('csdi_bus_routes', engine, if_exists='replace', index=False)
-            print(f"Loaded {len(csdi_gdf)} records into spatial table 'csdi_bus_routes'.")
+            print(f"GeoDataFrame has {len(csdi_gdf)} records")
+            try:
+                # Manually chunk and load data with a progress bar
+                chunk_size = 500
+
+                # Create the table with the correct schema by sending an empty GeoDataFrame
+                csdi_gdf.head(0).to_postgis('csdi_bus_routes', engine, if_exists='replace', index=False)
+
+                # Use tqdm for the progress bar
+                with tqdm(total=len(csdi_gdf), desc="Loading CSDI data to PostGIS") as pbar:
+                    for i in range(0, len(csdi_gdf), chunk_size):
+                        chunk = csdi_gdf.iloc[i:i + chunk_size]
+                        chunk.to_postgis(
+                            'csdi_bus_routes',
+                            engine,
+                            if_exists='append',
+                            index=False
+                        )
+                        pbar.update(len(chunk))
+
+                print(f"Loaded {len(csdi_gdf)} records into spatial table 'csdi_bus_routes'.")
+            except Exception as postgis_error:
+                print(f"Error saving to PostGIS: {str(postgis_error)}")
+                print(f"PostGIS error type: {type(postgis_error).__name__}")
+                print(f"GeoDataFrame info:")
+                print(f"  - Columns: {list(csdi_gdf.columns)}")
+                print(f"  - CRS: {csdi_gdf.crs}")
+                print(f"  - Geometry column: {csdi_gdf.geometry.name}")
+                print(f"  - Valid geometries: {csdi_gdf.geometry.is_valid.sum()}/{len(csdi_gdf)}")
+                print(f"  - Null geometries: {csdi_gdf.geometry.isna().sum()}")
+
+                # Try to save without geometry as fallback
+                print("Attempting to save without geometry data as fallback...")
+                try:
+                    csdi_df_no_geom = csdi_gdf.drop(columns=['geometry'])
+                    csdi_df_no_geom.to_sql('csdi_bus_routes_no_geom', engine, if_exists='replace', index=False)
+                    print(f"Loaded {len(csdi_df_no_geom)} records into 'csdi_bus_routes_no_geom' table (without geometry).")
+                except Exception as fallback_error:
+                    print(f"Fallback also failed: {str(fallback_error)}")
+                    raise postgis_error  # Re-raise the original PostGIS error
         else:
             print("No geometry column found, saving as regular table...")
             csdi_df.to_sql('csdi_bus_routes', engine, if_exists='replace', index=False)
