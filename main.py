@@ -73,10 +73,8 @@ def main():
 
     # Citybus
     raw_citybus_routes = fetch_or_load_from_cache("citybus_routes", citybus_client.fetch_all_routes, args.force_ingest)
-    raw_citybus_stop_ids = fetch_or_load_from_cache("citybus_stop_ids", citybus_client.fetch_all_stops_threaded, args.force_ingest)
-    raw_citybus_stop_details = fetch_or_load_from_cache("citybus_stop_details", citybus_client.fetch_all_stop_details_threaded, args.force_ingest, raw_citybus_stop_ids) if raw_citybus_stop_ids else []
-    raw_citybus_route_stops = []  # This would need to be fetched separately if needed
-    print(f"Citybus data - Routes: {len(raw_citybus_routes) if raw_citybus_routes else 0}, Stop IDs: {len(raw_citybus_stop_ids) if raw_citybus_stop_ids else 0}, Stop details: {len(raw_citybus_stop_details) if raw_citybus_stop_details else 0}, Route-stops: {len(raw_citybus_route_stops)}")
+    raw_citybus_stop_id, raw_citybus_route_sequences = citybus_client.fetch_all_stops_threaded(raw_citybus_routes)
+    raw_citybus_stop_details = fetch_or_load_from_cache("citybus_stop_details", citybus_client.fetch_all_stop_details_threaded, args.force_ingest, raw_citybus_stop_id)
 
     # NLB
     raw_nlb_routes = fetch_or_load_from_cache("nlb_routes", nlb_client.fetch_all_routes, args.force_ingest)
@@ -120,8 +118,8 @@ def main():
 
     process_and_load_citybus_data(
         raw_routes=raw_citybus_routes,
-        raw_stops=raw_citybus_route_stops,
         raw_stop_details=raw_citybus_stop_details,
+        raw_route_sequences=raw_citybus_route_sequences,
         engine=engine
     )
 

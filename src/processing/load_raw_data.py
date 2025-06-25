@@ -2,7 +2,6 @@ import pandas as pd
 import geopandas as gpd
 from sqlalchemy.engine import Engine
 from shapely import wkt
-import json
 
 def process_and_load_kmb_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine):
     if not all([raw_routes, raw_stops, raw_route_stops]):
@@ -89,7 +88,7 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     print(f"Loaded {len(route_stops_df)} records into 'gmb_stop_sequences' table.")
 
 def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_stops: list, raw_fares: list, engine: Engine):
-    if not all([raw_routes, raw_stops, raw_route_stops, raw_fares]):
+    if not all([raw_routes, raw_stops, raw_route_stops]):
         print("One or more MTR Bus raw data lists are empty. Aborting MTR Bus data processing.")
         return
 
@@ -101,10 +100,9 @@ def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_st
 
     print("Processing MTR Bus stops...")
     stops_df = pd.DataFrame(raw_stops)
-    stops_df = stops_df.rename(columns={'stop_id': 'STATION_ID', 'name_en': 'STATION_NAME_ENG', 'name_zh': 'STATION_NAME_CHI'})
     stops_gdf = gpd.GeoDataFrame(
         stops_df,
-        geometry=gpd.points_from_xy(stops_df.long.astype(float), stops_df.lat.astype(float)),
+        geometry=gpd.points_from_xy(stops_df['long'].astype(float), stops_df['lat'].astype(float)),
         crs="EPSG:4326"
     )
     stops_gdf = stops_gdf.drop(columns=['lat', 'long'])
@@ -116,14 +114,15 @@ def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_st
     route_stops_df.to_sql('mtrbus_stop_sequences', engine, if_exists='replace', index=False)
     print(f"Loaded {len(route_stops_df)} records into 'mtrbus_stop_sequences' table.")
 
-    print("Processing MTR Bus fares...")
-    fares_df = pd.DataFrame(raw_fares)
-    fares_df.to_sql('mtrbus_fares', engine, if_exists='replace', index=False)
-    print(f"Loaded {len(fares_df)} records into 'mtrbus_fares' table.")
+    if raw_fares:
+        print("Processing MTR Bus fares...")
+        fares_df = pd.DataFrame(raw_fares)
+        fares_df.to_sql('mtrbus_fares', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(fares_df)} records into 'mtrbus_fares' table.")
 
-def process_and_load_citybus_data(raw_routes: list, raw_stops: list, raw_stop_details: list, engine: Engine):
-    if not raw_routes or not raw_stop_details:
-        print("Citybus routes or stop details are empty. Aborting Citybus data processing.")
+def process_and_load_citybus_data(raw_routes: list, raw_stop_details: list, raw_route_sequences: list, engine: Engine):
+    if not all([raw_routes, raw_stop_details, raw_route_sequences]):
+        print("One or more Citybus raw data lists are empty. Aborting Citybus data processing.")
         return
 
     print("Processing Citybus routes...")
@@ -143,13 +142,23 @@ def process_and_load_citybus_data(raw_routes: list, raw_stops: list, raw_stop_de
     stops_gdf.to_postgis('citybus_stops', engine, if_exists='replace', index=False)
     print(f"Loaded {len(stops_gdf)} records into spatial table 'citybus_stops'.")
 
-    if raw_stops:
-        print("Processing Citybus route-stop sequences...")
-        route_stops_df = pd.DataFrame(raw_stops)
-        route_stops_df.to_sql('citybus_stop_sequences', engine, if_exists='replace', index=False)
-        print(f"Loaded {len(route_stops_df)} records into 'citybus_stop_sequences' table.")
-    else:
-        print("No Citybus route-stop sequence data available, skipping...")
+    print("Processing Citybus route-stop sequences...")
+    route_stops_df = pd.DataFrame(raw_route_sequences)
+    # Expand the stop_ids list into individual rows
+    expanded_sequences = []
+    for _, row in route_stops_df.iterrows():
+        for seq, stop_id in enumerate(row['stop_ids'], 1):
+            expanded_sequences.append({
+                'route_id': row['route_id'],
+                'direction': row['direction'],
+                'stop_id': stop_id,
+                'sequence': seq
+            })
+
+    sequences_df = pd.DataFrame(expanded_sequences)
+    sequences_df['unique_route_id'] = sequences_df['route_id']
+    sequences_df.to_sql('citybus_stop_sequences', engine, if_exists='replace', index=False)
+    print(f"Loaded {len(sequences_df)} records into 'citybus_stop_sequences' table.")
 
 def process_and_load_nlb_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine):
     if not all([raw_routes, raw_stops, raw_route_stops]):
@@ -263,7 +272,7 @@ def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine):
             print(f"GeoDataFrame has {len(csdi_gdf)} records")
             try:
                 # Manually chunk and load data with a progress bar
-                chunk_size = 500
+                chunk_size = 200
 
                 # Create the table with the correct schema by sending an empty GeoDataFrame
                 csdi_gdf.head(0).to_postgis('csdi_bus_routes', engine, if_exists='replace', index=False)
@@ -284,7 +293,7 @@ def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine):
             except Exception as postgis_error:
                 print(f"Error saving to PostGIS: {str(postgis_error)}")
                 print(f"PostGIS error type: {type(postgis_error).__name__}")
-                print(f"GeoDataFrame info:")
+                print("GeoDataFrame info:")
                 print(f"  - Columns: {list(csdi_gdf.columns)}")
                 print(f"  - CRS: {csdi_gdf.crs}")
                 print(f"  - Geometry column: {csdi_gdf.geometry.name}")

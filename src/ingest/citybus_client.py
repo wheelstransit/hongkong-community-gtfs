@@ -23,6 +23,8 @@ def fetch_all_routes():
         return None
 
 def fetch_route_stops(route_id, direction): #can't just do it all at once :(
+    # you're getting something like:
+    # {"type": "RouteStop", "version": "2.0", "generated_timestamp": "2025-06-25T23:12:23+08:00", "data": [{"co": "CTB", "route": "1", "dir": "I", "seq": 1, "stop": "002403", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 2, "stop": "002402", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 3, "stop": "002492", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 4, "stop": "002493", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 5, "stop": "002453", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 6, "stop": "002552", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 7, "stop": "002553", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 8, "stop": "002467", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 9, "stop": "002566", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 10, "stop": "002537", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 11, "stop": "002446", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 12, "stop": "002449", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 13, "stop": "001140", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 14, "stop": "001142", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 15, "stop": "001054", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 16, "stop": "001056", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 17, "stop": "001175", "data_timestamp": "2025-06-25T05:00:04+08:00"}, {"co": "CTB", "route": "1", "dir": "I", "seq": 18, "stop": "001027", "data_timestamp": "2025-06-25T05:00:04+08:00"}]}
     endpoint = f"{BASE_URL}/route-stop/CTB/{route_id}/{direction}"
     try:
         response = requests.get(endpoint, timeout=15)
@@ -35,12 +37,11 @@ def worker_fetch_stops(task):
     route_id, direction = task
     return fetch_route_stops(route_id, direction)
 
-def fetch_all_stops_threaded(max_workers=20):
-    print(f"\nFetching all unique stop IDs with up to {max_workers} threads:>")
-    all_routes = fetch_all_routes()
+def fetch_all_stops_threaded(all_routes, max_workers=20):
+    print(f"\nFetching all unique stop IDs and route sequences with up to {max_workers} threads:>")
     if not all_routes:
         print("Could not fetch routes, cannot proceed to fetch stops.")
-        return None
+        return None, None
     tasks = []
     for route_info in all_routes:
         route_id = route_info.get('route')
@@ -49,6 +50,7 @@ def fetch_all_stops_threaded(max_workers=20):
             tasks.append((route_id, 'outbound'))
 
     unique_stop_ids = set()
+    route_stop_sequences = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         #it's 3am and idk what i'm doing
@@ -56,15 +58,25 @@ def fetch_all_stops_threaded(max_workers=20):
 
         results_iterator = tqdm(results_iterator, total=len(tasks), desc="Processing routes")
 
-        for stops_on_route in results_iterator:
+        for i, stops_on_route in enumerate(results_iterator):
+            route_id, direction = tasks[i]
             if stops_on_route:
+                # Store simplified route stop sequence with just stop IDs in order
+                stop_ids_in_sequence = [stop_data['stop'] for stop_data in stops_on_route if stop_data and 'stop' in stop_data]
+                route_sequence = {
+                    'route_id': route_id,
+                    'direction': direction,
+                    'stop_ids': stop_ids_in_sequence
+                }
+                route_stop_sequences.append(route_sequence)
+
+                # Also collect unique stop IDs
                 for stop_data in stops_on_route:
                     if stop_data and 'stop' in stop_data:
                         unique_stop_ids.add(stop_data['stop'])
 
-    print(f"\nSuccessfully found {len(unique_stop_ids)} unique stop IDs across all routes.")
-    return sorted(list(unique_stop_ids))
-
+    print(f"\nSuccessfully found {len(unique_stop_ids)} unique stop IDs across {len(route_stop_sequences)} route directions.")
+    return sorted(list(unique_stop_ids)), route_stop_sequences
 
 def fetch_stop_details(stop_id):
     endpoint = f"{BASE_URL}/stop/{stop_id}"
@@ -80,18 +92,19 @@ def fetch_stop_details(stop_id):
 def worker_fetch_stop_details(stop_id):
     return fetch_stop_details(stop_id)
 
-def fetch_all_stop_details_threaded(stop_ids, max_workers=20):
-    print(f"\nFetching details for {len(stop_ids)} stops with up to {max_workers} threads...")
-    if not stop_ids:
-        print("No stop IDs provided.")
-        return []
+def fetch_all_stop_details_threaded(list_of_route_stops, max_workers=20):
+    # list of route stops should be the result of fetch_all_stops_threaded
+    print(f"\nFetching stop details with up to {max_workers} threads...")
+    if not list_of_route_stops:
+        print("No stop IDs provided, cannot fetch stop details.")
+        return None
 
     stop_details = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results_iterator = executor.map(worker_fetch_stop_details, stop_ids)
+        results_iterator = executor.map(worker_fetch_stop_details, list_of_route_stops)
 
-        results_iterator = tqdm(results_iterator, total=len(stop_ids), desc="Fetching stop details")
+        results_iterator = tqdm(results_iterator, total=len(list_of_route_stops), desc="Fetching stop details")
 
         for stop_detail in results_iterator:
             if stop_detail:
@@ -99,7 +112,6 @@ def fetch_all_stop_details_threaded(stop_ids, max_workers=20):
 
     print(f"\nSuccessfully fetched details for {len(stop_details)} stops.")
     return stop_details
-
 
 if __name__ == '__main__':
     start_time = time.time()
@@ -111,7 +123,9 @@ if __name__ == '__main__':
         print(routes_data[0])
     print("-" * 20)
 
-    all_stop_ids = fetch_all_stops_threaded(max_workers=30)
+    all_stop_ids, route_sequences = fetch_all_stops_threaded(routes_data, max_workers=30)
+
+    all_stop_details = fetch_all_stop_details_threaded(all_stop_ids, max_workers=30)
 
     if all_stop_ids:
         print("\nSample of fetched stop IDs:")
@@ -123,30 +137,53 @@ if __name__ == '__main__':
             print("Sample stop detail data:")
             print(sample_stop_details[0])
 
+    if route_sequences:
+        print(f"\nSample route sequence (first route):")
+        print(f"Route ID: {route_sequences[0]['route_id']}, Direction: {route_sequences[0]['direction']}")
+        print(f"First 3 stop IDs: {route_sequences[0]['stop_ids'][:3]}")
+
+    if all_stop_details:
+        print("\nSample of fetched stop details:")
+        print(all_stop_details[:5])
+
     end_time = time.time()
     print("done testing :)")
-
 """
 testing :)
 Fetching all Citybus routes...
 Successfully fetched 400 routes.
 
 Sample route data:
-{'co': 'CTB', 'route': '1', 'orig_tc': '中環 (港澳碼頭)', 'orig_en': 'Central (Macau Ferry)', 'dest_tc': '跑馬地 (上)', 'dest_en': 'Happy Valley (Upper)', 'orig_sc': '中环 (港澳码头)', 'dest_sc': '跑马地 (上)', 'data_timestamp': '2025-06-14T05:00:02+08:00'}
+{'co': 'CTB', 'route': '1', 'orig_tc': '中環 (港澳碼頭)', 'orig_en': 'Central (Macau Ferry)', 'dest_tc': '跑馬地 (上)', 'dest_en': 'Happy Valley (Upper)', 'orig_sc': '中环 (港澳码头)', 'dest_sc': '跑马地 (上)', 'data_timestamp': '2025-06-25T05:00:02+08:00'}
 --------------------
 
-Fetching all unique stop IDs with up to 30 threads:>
-Fetching all Citybus routes...
-Successfully fetched 400 routes.
-Processing routes: 100%
+Fetching all unique stop IDs and route sequences with up to 30 threads:>
+Processing routes: 100%|████| 800/800 [00:02<00:00, 288.94it/s]
 
-Successfully found 2558 unique stop IDs across all routes.
+Successfully found 2558 unique stop IDs across 677 route directions.
+
+Fetching stop details with up to 30 threads...
+Fetching stop details: 100%|█| 2558/2558 [00:08<00:00, 313.52it
+
+Successfully fetched details for 2558 stops.
 
 Sample of fetched stop IDs:
 ['001001', '001002', '001003', '001004', '001005']
 
-Fetching details for a sample stop...
+Fetching details for first 5 stops using threaded method...
+
+Fetching stop details with up to 5 threads...
+Fetching stop details: 100%|████| 5/5 [00:00<00:00, 188.12it/s]
+
+Successfully fetched details for 5 stops.
 Sample stop detail data:
-{'stop': '001001', 'name_tc': '中央廣場, 亞畢諾道', 'name_en': 'The Centrium, Arbuthnot Road', 'lat': '22.279916732091', 'long': '114.15458450053', 'name_sc': '中央广场, 亚毕诺道', 'data_timestamp': '2025-06-14T05:00:02+08:00'}
+{'stop': '001001', 'name_tc': '中央廣場, 亞畢諾道', 'name_en': 'The Centrium, Arbuthnot Road', 'lat': '22.279916732091', 'long': '114.15458450053', 'name_sc': '中央广场, 亚毕诺道', 'data_timestamp': '2025-06-25T05:00:03+08:00'}
+
+Sample route sequence (first route):
+Route ID: 1, Direction: inbound
+First 3 stop IDs: ['002403', '002402', '002492']
+
+Sample of fetched stop details:
+[{'stop': '001001', 'name_tc': '中央廣場, 亞畢諾道', 'name_en': 'The Centrium, Arbuthnot Road', 'lat': '22.279916732091', 'long': '114.15458450053', 'name_sc': '中央广场, 亚毕诺道', 'data_timestamp': '2025-06-25T05:00:03+08:00'}, {'stop': '001002', 'name_tc': '西寶城, 卑路乍街', 'name_en': "The Westwood, Belcher's Street", 'lat': '22.286057592091', 'long': '114.13262448053', 'name_sc': '西宝城, 卑路乍街', 'data_timestamp': '2025-06-25T05:00:03+08:00'}, {'stop': '001003', 'name_tc': '山市街, 卑路乍街', 'name_en': "Sands Street, Belcher's Street", 'lat': '22.283632272091', 'long': '114.13063421053', 'name_sc': '山市街, 卑路乍街', 'data_timestamp': '2025-06-25T05:00:03+08:00'}, {'stop': '001004', 'name_tc': '北街, 卑路乍街', 'name_en': "North Street, Belcher's Street", 'lat': '22.282646942091', 'long': '114.12866820053', 'name_sc': '北街, 卑路乍街', 'data_timestamp': '2025-06-25T05:00:03+08:00'}, {'stop': '001005', 'name_tc': '聯邦新樓, 卑路乍街', 'name_en': "Luen Bong Apartment, Belcher's Street", 'lat': '22.282463392091', 'long': '114.12760792053', 'name_sc': '联邦新楼, 卑路乍街', 'data_timestamp': '2025-06-25T05:00:03+08:00'}]
 done testing :)
 """

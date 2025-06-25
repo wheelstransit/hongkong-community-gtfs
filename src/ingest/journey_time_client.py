@@ -31,8 +31,6 @@ def fetch_hourly_journey_time_data(weekday, hour):
         response = requests.get(endpoint, timeout=30)
         response.raise_for_status()
         data = response.json()
-        if data is not None:
-            print(f"Successfully fetched journey time data for weekday {weekday}, hour {hour_str}.")
         return data
     except requests.exceptions.RequestException as e:
         print(f"Error fetching journey time data for weekday {weekday}, hour {hour_str}: {e}")
