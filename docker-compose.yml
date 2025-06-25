@@ -18,6 +18,9 @@ services:
       - db
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/gtfs_hk
+    volumes:
+      - cache_data:/app/.cache:z
 
 volumes:
   pg_data:
+  cache_data:

@@ -26,7 +26,6 @@ def fetch_all_journey_time_data():
 def fetch_hourly_journey_time_data(weekday, hour):
     hour_str = f"{hour:02d}"
     endpoint = f"{BASE_URL}/times_hourly/{weekday}/{hour_str}/all.json"
-    print(f"Fetching journey time data for weekday {weekday}, hour {hour_str}...")
 
     try:
         response = requests.get(endpoint, timeout=30)
