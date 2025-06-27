@@ -23,6 +23,7 @@ The primary motivation for this project is the poor quality of existing data. Th
 
 ## Credits
 HK-Bus-ETA/hk-bus-time-between-stops
+hkbus/hk-bus-crawling
 
 ## Hosted GTFS
 Sponsored by Wheels

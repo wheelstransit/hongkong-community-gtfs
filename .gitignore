@@ -203,3 +203,6 @@ logs/
 
 # Documentation builds
 docs/build/
+OpenCode.md
+nvim.local.config
+.opencode/
