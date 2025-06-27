@@ -47,12 +47,20 @@ def scrape_train_frequency():
     for row in rows:
         cells = row.find_all('td')
         if len(cells) == len(cleaned_headers):
-            line_name = cells[0].get_text(strip=True).replace('\u00a0', ' ')
+            line_name = cells[0].get_text(strip=True).replace('\u00a0', ' ').rstrip('~#')
             frequencies = {
                 cleaned_headers[i]: cells[i].get_text(strip=True).replace('\u00a0', ' ')
                 for i in range(1, len(cleaned_headers))
             }
-            structured_data[line_name] = frequencies
+            structured_data[line_name] = {
+                'weekdays': {
+                    'morning_peak': frequencies.get('WeekdaysMorning Peak Hours', ''),
+                    'evening_peak': frequencies.get('WeekdaysEvening Peak Hours', ''),
+                    'non_peak': frequencies.get('WeekdaysNon-peak Hours', '')
+                },
+                'saturdays': frequencies.get('Saturdays', ''),
+                'sundays_and_holidays': frequencies.get('Sundays and Public Holidays', '')
+            }
 
     return structured_data
 
