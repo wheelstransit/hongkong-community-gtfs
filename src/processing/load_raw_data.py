@@ -87,6 +87,8 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     route_stops_df.to_sql('gmb_stop_sequences', engine, if_exists='replace', index=False)
     print(f"Loaded {len(route_stops_df)} records into 'gmb_stop_sequences' table.")
 
+from .mtrbus_station_merging import unify_mtrbus_stops
+
 def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_stops: list, raw_fares: list, engine: Engine):
     if not all([raw_routes, raw_stops, raw_route_stops]):
         print("One or more MTR Bus raw data lists are empty. Aborting MTR Bus data processing.")
@@ -94,12 +96,23 @@ def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_st
 
     print("Processing MTR Bus routes...")
     routes_df = pd.DataFrame(raw_routes)
-    routes_df['unique_route_id'] = routes_df['ROUTE_ID']
+    # Standardize column names from CSV to lowercase for consistency
+    routes_df.columns = routes_df.columns.str.lower()
+    routes_df['unique_route_id'] = routes_df['route_id']
     routes_df.to_sql('mtrbus_routes', engine, if_exists='replace', index=False)
     print(f"Loaded {len(routes_df)} records into 'mtrbus_routes' table.")
 
-    print("Processing MTR Bus stops...")
-    stops_df = pd.DataFrame(raw_stops)
+    print("Unifying MTR Bus stops by coordinates...")
+    # The 'raw_stops' list already has the desired lowercase keys ('stop_id', 'lat', 'long')
+    # from the client's fetch_all_stops() function.
+    # Ensure the stop_id is a string for mapping.
+    for stop in raw_stops:
+        stop['stop_id'] = str(stop.get('stop_id', ''))
+
+    unified_stops, orig_to_unified, unified_to_orig = unify_mtrbus_stops(raw_stops, stop_id_key="stop_id", lat_key="lat", lon_key="long", precision=7)
+    print(f"Unified {len(raw_stops)} stops into {len(unified_stops)} unique locations.")
+
+    stops_df = pd.DataFrame(unified_stops)
     stops_gdf = gpd.GeoDataFrame(
         stops_df,
         geometry=gpd.points_from_xy(stops_df['long'].astype(float), stops_df['lat'].astype(float)),
@@ -111,12 +124,34 @@ def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_st
 
     print("Processing MTR Bus route-stop sequences...")
     route_stops_df = pd.DataFrame(raw_route_stops)
+    route_stops_df.columns = route_stops_df.columns.str.lower()
+
+    if "station_id" in route_stops_df.columns:
+        print("Found 'station_id' column. Renaming to 'stop_id' and mapping to unified IDs...")
+
+        route_stops_df = route_stops_df.rename(columns={"station_id": "stop_id"})
+        original_ids = route_stops_df["stop_id"].copy()
+
+        route_stops_df["stop_id"] = route_stops_df["stop_id"].astype(str).map(orig_to_unified)
+
+        unmapped_count = route_stops_df["stop_id"].isna().sum()
+        if unmapped_count > 0:
+            print(f"Warning: {unmapped_count} stop_ids could not be mapped. Reverting them to original IDs.")
+            route_stops_df["stop_id"] = route_stops_df["stop_id"].fillna(original_ids)
+
+        print("Mapping complete.")
+    else:
+        print("Warning: 'STATION_ID' column not found in route-stop data. Cannot map to unified IDs.")
+
     route_stops_df.to_sql('mtrbus_stop_sequences', engine, if_exists='replace', index=False)
     print(f"Loaded {len(route_stops_df)} records into 'mtrbus_stop_sequences' table.")
 
     if raw_fares:
         print("Processing MTR Bus fares...")
         fares_df = pd.DataFrame(raw_fares)
+        for col in ["origin_stop_id", "destination_stop_id"]:
+            if col in fares_df.columns:
+                fares_df[col] = fares_df[col].astype(str).map(orig_to_unified).fillna(fares_df[col])
         fares_df.to_sql('mtrbus_fares', engine, if_exists='replace', index=False)
         print(f"Loaded {len(fares_df)} records into 'mtrbus_fares' table.")
 
@@ -327,6 +362,50 @@ def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine):
         except Exception as fallback_e:
             print(f"Fallback also failed: {str(fallback_e)}")
 
+def process_and_load_mtr_rails_data(
+    raw_mtr_lines_and_stations: list,
+    raw_mtr_lines_fares: list,
+    raw_light_rail_routes_and_stops: list,
+    raw_light_rail_fares: list,
+    raw_airport_express_fares: list,
+    engine: Engine
+):
+    """
+    Process and load MTR heavy rail, Light Rail, and Airport Express data into the database.
+    """
+    # --- MTR Heavy Rail ---
+    if raw_mtr_lines_and_stations:
+        print("Processing MTR lines and stations...")
+        mtr_lines_stations_df = pd.DataFrame(raw_mtr_lines_and_stations)
+        mtr_lines_stations_df.to_sql('mtr_lines_and_stations', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(mtr_lines_stations_df)} records into 'mtr_lines_and_stations' table.")
+
+    if raw_mtr_lines_fares:
+        print("Processing MTR heavy rail fares...")
+        mtr_fares_df = pd.DataFrame(raw_mtr_lines_fares)
+        mtr_fares_df.to_sql('mtr_lines_fares', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(mtr_fares_df)} records into 'mtr_lines_fares' table.")
+
+    # --- Light Rail ---
+    if raw_light_rail_routes_and_stops:
+        print("Processing Light Rail routes and stops...")
+        lrt_routes_stops_df = pd.DataFrame(raw_light_rail_routes_and_stops)
+        lrt_routes_stops_df.to_sql('light_rail_routes_and_stops', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(lrt_routes_stops_df)} records into 'light_rail_routes_and_stops' table.")
+
+    if raw_light_rail_fares:
+        print("Processing Light Rail fares...")
+        lrt_fares_df = pd.DataFrame(raw_light_rail_fares)
+        lrt_fares_df.to_sql('light_rail_fares', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(lrt_fares_df)} records into 'light_rail_fares' table.")
+
+    # --- Airport Express ---
+    if raw_airport_express_fares:
+        print("Processing Airport Express fares...")
+        ae_fares_df = pd.DataFrame(raw_airport_express_fares)
+        ae_fares_df.to_sql('airport_express_fares', engine, if_exists='replace', index=False)
+        print(f"Loaded {len(ae_fares_df)} records into 'airport_express_fares' table.")
+
 def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_journey_time_data: dict, engine: Engine):
     """Process and load journey time data into the database."""
     if not any([raw_journey_time_data, raw_hourly_journey_time_data]):
@@ -374,3 +453,70 @@ def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_j
             hourly_journey_time_df = pd.DataFrame(flattened_hourly_data)
             hourly_journey_time_df.to_sql('hourly_journey_time_data', engine, if_exists='replace', index=False)
             print(f"Loaded {len(hourly_journey_time_df)} records into 'hourly_journey_time_data' table.")
+
+
+def process_and_load_osm_data(raw_osm_data, engine):
+    # This is a placeholder for the actual data processing and loading logic
+    print("Processing and loading OSM data...")
+    if raw_osm_data and 'elements' in raw_osm_data:
+        print(f"  - Received {len(raw_osm_data['elements'])} OSM elements.")
+    # Here you would typically:
+    # 1. Parse the complex JSON structure from Overpass API
+    # 2. Extract relevant information (routes, stops, ways, nodes)
+    # 3. Transform it into a structured format (e.g., pandas DataFrames)
+    # 4. Relate it to your existing GTFS data model
+    # 5. Load the cleaned and structured data into the database
+    print("  - Placeholder: OSM data processing not yet implemented.")
+
+def process_and_load_tramway_data(raw_routes: list, raw_stops: list, engine: Engine):
+    """
+    Process and load Tramway routes and stops (with multilingual fields, no location data) into the database.
+    """
+    if not raw_routes or not raw_stops:
+        print("Tramway routes or stops data is empty. Aborting Tramway data processing.")
+        return
+
+    print("Processing Tramway routes...")
+    routes_df = pd.DataFrame(raw_routes)
+    # Select and rename columns for clarity and multilingual support
+    route_columns = [
+        "Route ID" if "Route ID" in routes_df.columns else routes_df.columns[0],
+        "route_name_en", "route_name_tc", "route_name_sc",
+        "origin_en", "origin_tc", "origin_sc",
+        "destination_en", "destination_tc", "destination_sc"
+    ]
+    route_columns = [col for col in route_columns if col in routes_df.columns]
+    routes_df = routes_df[route_columns]
+    routes_df = routes_df.rename(columns={
+        route_columns[0]: "route_id",
+        "origin_en": "start_en",
+        "origin_tc": "start_tc",
+        "origin_sc": "start_sc",
+        "destination_en": "end_en",
+        "destination_tc": "end_tc",
+        "destination_sc": "end_sc"
+    })
+    routes_df.to_sql('tramway_routes', engine, if_exists='replace', index=False)
+    print(f"Loaded {len(routes_df)} records into 'tramway_routes' table.")
+
+    print("Processing Tramway stops...")
+    stops_df = pd.DataFrame(raw_stops)
+    # Select and rename columns for clarity and multilingual support
+    stop_columns = [
+        "Stops Code" if "Stops Code" in stops_df.columns else stops_df.columns[0],
+        "Traveling Direction" if "Traveling Direction" in stops_df.columns else None,
+        "stop_name_en", "stop_name_tc", "stop_name_sc"
+    ]
+    stop_columns = [col for col in stop_columns if col and col in stops_df.columns]
+    stops_df = stops_df[stop_columns]
+    stops_df = stops_df.rename(columns={
+        stop_columns[0]: "stop_code",
+        "Traveling Direction": "direction_en",  # Only English direction is available from the English CSV
+        "stop_name_en": "stop_name_en",
+        "stop_name_tc": "stop_name_tc",
+        "stop_name_sc": "stop_name_sc"
+    })
+    stops_df.to_sql('tramway_stops', engine, if_exists='replace', index=False)
+    print(f"Loaded {len(stops_df)} records into 'tramway_stops' table.")
+
+    print("Tramway data processing and loading complete.")

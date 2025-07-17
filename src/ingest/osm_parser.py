@@ -1,49 +1,52 @@
-import osmnx as ox
-import geopandas as gpd
-import pandas as pd
-from shapely.geometry import Point, LineString
-import pickle
-import os
+import requests
+import json
 
-class OSMRoadNetwork:
-    def __init__(self, place_name="Hong Kong", cache_dir="data/osm_cache"):
-        self.place_name = place_name
-        self.cache_dir = cache_dir
-        self.graph = None
-        self.edges_gdf = None
-        os.makedirs(cache_dir, exist_ok=True)
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
-    def fetch_road_network(self, network_type='drive'):
-        cache_file = os.path.join(self.cache_dir, f"hk_roads_{network_type}.pkl")
+# Bounding box for Hong Kong
+# (south, west, north, east)
+HONG_KONG_BBOX = (22.15, 113.83, 22.56, 114.42)
 
-        if os.path.exists(cache_file):
-            print("Loading cached OSM road network...")
-            with open(cache_file, 'rb') as f:
-                self.graph = pickle.load(f)
-        else:
-            print("Downloading OSM road network...")
-            self.graph = ox.graph_from_place(
-                self.place_name,
-                network_type=network_type,
-                simplify=True,
-                retain_all=False
-            )
+def build_overpass_query(bbox):
+    bbox_str = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
 
-            with open(cache_file, 'wb') as f:
-                pickle.dump(self.graph, f)
+    # This query looks for relations that are tagged as public transport routes.
+    # It includes buses, minibuses, trains, trams, subways, and ferries.
+    query = f"""
+    [out:json][timeout:300];
+    (
+      relation["type"="route"]["route"~"^(bus|trolleybus|minibus|train|tram|subway|ferry)$"]({bbox_str});
+    );
+    out body;
+    >;
+    out skel qt;
+    """
+    return query
 
-        self.edges_gdf = ox.graph_to_gdfs(self.graph, nodes=False, edges=True)
-        return self.graph, self.edges_gdf
+def fetch_osm_routes():
+    print("Building Overpass query for Hong Kong public transit routes...")
+    query = build_overpass_query(HONG_KONG_BBOX)
 
-    def get_road_edges_in_bbox(self, bbox):
-        if self.edges_gdf is None:
-            raise ValueError("Road network not loaded. Call fetch_road_network() first.")
+    print("Fetching data from Overpass API... (This may take a few minutes)")
+    try:
+        response = requests.post(OVERPASS_URL, data={"data": query}, timeout=300)
+        response.raise_for_status()
+        print("Successfully fetched data from Overpass API.")
+        return response.json()
 
-        minx, miny, maxx, maxy = bbox
-        mask = (
-            (self.edges_gdf.geometry.bounds['minx'] <= maxx) &
-            (self.edges_gdf.geometry.bounds['maxx'] >= minx) &
-            (self.edges_gdf.geometry.bounds['miny'] <= maxy) &
-            (self.edges_gdf.geometry.bounds['maxy'] >= miny)
-        )
-        return self.edges_gdf[mask]
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data from Overpass API: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON response: {e}")
+        print(f"Response text: {response.text}")
+        return None
+
+if __name__ == '__main__':
+    print("Running OSM parser as a standalone script...")
+    osm_data = fetch_osm_routes()
+    if osm_data:
+        print(f"Successfully retrieved {len(osm_data.get('elements', []))} elements from OSM.")
+        with open("osm_routes.json", "w") as f:
+            json.dump(osm_data, f, indent=2)
+        print("Data saved to osm_routes.json")

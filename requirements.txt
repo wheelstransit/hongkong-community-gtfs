@@ -10,3 +10,4 @@ shapely
 rtree
 networkx
 scikit-learn
+geopy

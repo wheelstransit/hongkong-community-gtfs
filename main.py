@@ -2,7 +2,7 @@ import argparse
 import os
 import pickle
 from src.common.database import get_db_engine
-from src.ingest import kmb_client, citybus_client, gov_gtfs_client,gov_csdi_client,gmb_client, mtrbus_client, nlb_client, journey_time_client, osm_parser
+from src.ingest import kmb_client, citybus_client, gov_gtfs_client,gov_csdi_client,gmb_client, mtrbus_client, nlb_client, journey_time_client, osm_parser, mtr_rails_client
 from src.processing.load_raw_data import (
     process_and_load_kmb_data,
     process_and_load_gmb_data,
@@ -11,8 +11,11 @@ from src.processing.load_raw_data import (
     process_and_load_nlb_data,
     process_and_load_gov_gtfs_data,
     process_and_load_csdi_data,
-    process_and_load_journey_time_data
+    process_and_load_journey_time_data,
+    process_and_load_osm_data,
+    process_and_load_mtr_rails_data
 )
+from src.export.export_gtfs import export_unified_feed
 
 CACHE_DIR = ".cache"
 
@@ -71,6 +74,17 @@ def main():
     raw_mtrbus_fares = fetch_or_load_from_cache("mtrbus_fares", mtrbus_client.fetch_all_fares, args.force_ingest)
     print(f"MTR Bus data - Routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, Stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, Route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}, Fares: {len(raw_mtrbus_fares) if raw_mtrbus_fares else 0}")
 
+    raw_mtr_lines_and_stations = fetch_or_load_from_cache("mtr_lines_and_stations", mtr_rails_client.fetch_mtr_lines_and_stations, args.force_ingest)
+    raw_mtr_lines_fares = fetch_or_load_from_cache("mtr_lines_fares", mtr_rails_client.fetch_mtr_lines_fares, args.force_ingest)
+    raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest)
+    raw_light_rail_fares = fetch_or_load_from_cache("light_rail_fares", mtr_rails_client.fetch_light_rail_fares, args.force_ingest)
+    raw_airport_express_fares = fetch_or_load_from_cache("airport_express_fares", mtr_rails_client.fetch_airport_express_fares, args.force_ingest)
+    print(f"MTR Rail data - Lines/Stations: {len(raw_mtr_lines_and_stations) if raw_mtr_lines_and_stations else 0}, Fares: {len(raw_mtr_lines_fares) if raw_mtr_lines_fares else 0}")
+    print(f"Light Rail data - Routes/Stops: {len(raw_light_rail_routes_and_stops) if raw_light_rail_routes_and_stops else 0}, Fares: {len(raw_light_rail_fares) if raw_light_rail_fares else 0}")
+    print(f"Airport Express Fares: {len(raw_airport_express_fares) if raw_airport_express_fares else 0}")
+
+
+
     # Citybus
     raw_citybus_routes = fetch_or_load_from_cache("citybus_routes", citybus_client.fetch_all_routes, args.force_ingest)
     raw_citybus_stop_id, raw_citybus_route_sequences = citybus_client.fetch_all_stops_threaded(raw_citybus_routes)
@@ -90,6 +104,10 @@ def main():
     raw_journey_time_data = fetch_or_load_from_cache("journey_time", journey_time_client.fetch_all_journey_time_data, args.force_ingest)
     raw_hourly_journey_time_data = fetch_or_load_from_cache("hourly_journey_time", journey_time_client.fetch_all_hourly_journey_time_data_threaded, args.force_ingest)
     print(f"Journey Time data - Basic: {len(raw_journey_time_data) if raw_journey_time_data else 0} records, Hourly: {len(raw_hourly_journey_time_data) if raw_hourly_journey_time_data else 0} records")
+
+    # OSM
+    raw_osm_routes = fetch_or_load_from_cache("osm_routes", osm_parser.fetch_osm_routes, args.force_ingest)
+    print(f"OSM data - Elements: {len(raw_osm_routes.get('elements', [])) if raw_osm_routes else 0}")
 
     # PROCESS
     print("processing data")
@@ -130,6 +148,15 @@ def main():
         engine=engine
     )
 
+    process_and_load_mtr_rails_data(
+        raw_mtr_lines_and_stations=raw_mtr_lines_and_stations,
+        raw_mtr_lines_fares=raw_mtr_lines_fares,
+        raw_light_rail_routes_and_stops=raw_light_rail_routes_and_stops,
+        raw_light_rail_fares=raw_light_rail_fares,
+        raw_airport_express_fares=raw_airport_express_fares,
+        engine=engine
+    )
+
     process_and_load_gov_gtfs_data(
         raw_frequencies=raw_gov_frequencies,
         raw_trips=raw_gov_trips,
@@ -148,6 +175,16 @@ def main():
         raw_journey_time_data=raw_journey_time_data,
         raw_hourly_journey_time_data=raw_hourly_journey_time_data,
         engine=engine
+    )
+
+    process_and_load_osm_data(
+        raw_osm_data=raw_osm_routes,
+        engine=engine
+    )
+
+    export_unified_feed(
+        engine=engine,
+        output_dir=os.path.join("output", "gtfs"),
     )
 
     print("processing complete")
