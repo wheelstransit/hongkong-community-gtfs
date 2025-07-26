@@ -40,13 +40,13 @@ def fetch_stops_for_route(route):
     except (requests.exceptions.RequestException, json.JSONDecodeError):
         return route, None
 
-def fetch_all_stops_and_route_stops_threaded(max_workers=20):
+def fetch_all_stops_and_route_stops_threaded(routes, max_workers=20):
     print(f"\nFetching all NLB stops and route-stop sequences with up to {max_workers} threads...")
     
-    routes = fetch_all_routes()
     if not routes:
         print("Could not fetch routes, aborting stop fetching.")
         return None, None
+
 
     all_stops_dict = {}
     all_route_stops = []

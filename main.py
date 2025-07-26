@@ -87,12 +87,13 @@ def main():
 
     # Citybus
     raw_citybus_routes = fetch_or_load_from_cache("citybus_routes", citybus_client.fetch_all_routes, args.force_ingest)
-    raw_citybus_stop_id, raw_citybus_route_sequences = citybus_client.fetch_all_stops_threaded(raw_citybus_routes)
+    citybus_stops_data = fetch_or_load_from_cache("citybus_stops_and_sequences", citybus_client.fetch_all_stops_threaded, args.force_ingest, raw_citybus_routes)
+    raw_citybus_stop_id, raw_citybus_route_sequences = citybus_stops_data if citybus_stops_data else ([], [])
     raw_citybus_stop_details = fetch_or_load_from_cache("citybus_stop_details", citybus_client.fetch_all_stop_details_threaded, args.force_ingest, raw_citybus_stop_id)
 
     # NLB
     raw_nlb_routes = fetch_or_load_from_cache("nlb_routes", nlb_client.fetch_all_routes, args.force_ingest)
-    nlb_stops_data = fetch_or_load_from_cache("nlb_stops_and_route_stops", nlb_client.fetch_all_stops_and_route_stops_threaded, args.force_ingest)
+    nlb_stops_data = fetch_or_load_from_cache("nlb_stops_and_route_stops", nlb_client.fetch_all_stops_and_route_stops_threaded, args.force_ingest, raw_nlb_routes)
     raw_nlb_stops, raw_nlb_route_stops = nlb_stops_data if nlb_stops_data else ([], [])
     print(f"NLB data - Routes: {len(raw_nlb_routes) if raw_nlb_routes else 0}, Stops: {len(raw_nlb_stops) if raw_nlb_stops else 0}, Route-stops: {len(raw_nlb_route_stops) if raw_nlb_route_stops else 0}")
 
@@ -185,6 +186,7 @@ def main():
     export_unified_feed(
         engine=engine,
         output_dir=os.path.join("output", "gtfs"),
+        journey_time_data=raw_journey_time_data
     )
 
     print("processing complete")

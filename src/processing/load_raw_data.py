@@ -67,7 +67,15 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     print(f"Loaded {len(routes_df)} records into 'gmb_routes' table.")
 
     print("Processing GMB stops...")
+    # Create a mapping from stop_id to stop names from the route_stops data
+    route_stops_df_for_names = pd.DataFrame(raw_route_stops)
+    stop_names_map = route_stops_df_for_names[['stop_id', 'stop_name_en', 'stop_name_tc', 'stop_name_sc']].drop_duplicates('stop_id').set_index('stop_id')
+
     stops_df = pd.DataFrame(raw_stops)
+    
+    # Join the names into the main stops dataframe
+    stops_df = stops_df.join(stop_names_map, on='stop_id')
+
     # Extract coordinates from nested structure
     stops_df['lat'] = stops_df['coordinates'].apply(lambda x: x['wgs84']['latitude'] if x and 'wgs84' in x else None)
     stops_df['long'] = stops_df['coordinates'].apply(lambda x: x['wgs84']['longitude'] if x and 'wgs84' in x else None)
@@ -161,8 +169,15 @@ def process_and_load_citybus_data(raw_routes: list, raw_stop_details: list, raw_
         return
 
     print("Processing Citybus routes...")
-    routes_df = pd.DataFrame(raw_routes)
-    routes_df['unique_route_id'] = routes_df['route']
+    routes_info_df = pd.DataFrame(raw_routes)
+    route_directions_df = pd.DataFrame(raw_route_sequences)[['route_id', 'direction']].drop_duplicates()
+    routes_df = pd.merge(
+        routes_info_df,
+        route_directions_df,
+        left_on='route',
+        right_on='route_id'
+    )
+    routes_df['unique_route_id'] = routes_df['route'] + '-' + routes_df['direction']
     routes_df.to_sql('citybus_routes', engine, if_exists='replace', index=False)
     print(f"Loaded {len(routes_df)} records into 'citybus_routes' table.")
 
@@ -191,7 +206,7 @@ def process_and_load_citybus_data(raw_routes: list, raw_stop_details: list, raw_
             })
 
     sequences_df = pd.DataFrame(expanded_sequences)
-    sequences_df['unique_route_id'] = sequences_df['route_id']
+    sequences_df['unique_route_id'] = sequences_df['route_id'] + '-' + sequences_df['direction']
     sequences_df.to_sql('citybus_stop_sequences', engine, if_exists='replace', index=False)
     print(f"Loaded {len(sequences_df)} records into 'citybus_stop_sequences' table.")
 
