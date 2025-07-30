@@ -3,7 +3,8 @@ import geopandas as gpd
 from sqlalchemy.engine import Engine
 import os
 import zipfile
-from src.processing.stop_unification import unify_stops_by_name_and_distance, generate_stop_times_for_agency
+from src.processing.stop_unification import unify_stops_by_name_and_distance
+from src.processing.stop_times import generate_stop_times_for_agency
 
 def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict):
     print("--- Starting Unified GTFS Export Process ---")
@@ -185,7 +186,9 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     # -- MTR Bus --
     print("Processing MTR Bus routes, trips, and stop_times...")
     mtrbus_routes_df = pd.read_sql("SELECT * FROM mtrbus_routes", engine)
-    mtrbus_routes_df['route_id'] = 'MTRB-' + mtrbus_routes_df['unique_route_id']
+    mtrbus_stop_sequences_df = pd.read_sql("SELECT * FROM mtrbus_stop_sequences", engine)
+    mtrbus_routes_df = mtrbus_routes_df.merge(mtrbus_stop_sequences_df[['route_id', 'direction']].drop_duplicates(), on='route_id')
+    mtrbus_routes_df['route_id'] = 'MTRB-' + mtrbus_routes_df['unique_route_id'] + '-' + mtrbus_routes_df['direction']
     mtrbus_routes_df['agency_id'] = 'MTRB'
     mtrbus_routes_df['route_short_name'] = mtrbus_routes_df['route_id']
     mtrbus_routes_df['route_long_name'] = mtrbus_routes_df['route_name_eng']
@@ -196,10 +199,12 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         'route_id': mtrbus_routes_df['route_id'],
         'service_id': 'MTRB-' + mtrbus_routes_df['route_id'],
         'trip_id': mtrbus_routes_df['route_id'],
+        'route_short_name': mtrbus_routes_df['route_id'],
+        'direction_id': mtrbus_routes_df['direction'].map({'O': 0, 'I': 1}).fillna(-1).astype(int)
     })
 
     mtrbus_stoptimes_df = pd.read_sql("SELECT * FROM mtrbus_stop_sequences", engine)
-    mtrbus_stoptimes_df['trip_id'] = 'MTRB-' + mtrbus_stoptimes_df['route_id']
+    mtrbus_stoptimes_df['trip_id'] = 'MTRB-' + mtrbus_stoptimes_df['route_id'] + '-' + mtrbus_stoptimes_df['direction']
     mtrbus_stoptimes_df['stop_id'] = 'MTRB-' + mtrbus_stoptimes_df['stop_id'].astype(str)
     mtrbus_stoptimes_df['stop_id'] = mtrbus_stoptimes_df['stop_id'].replace(mtrbus_duplicates_map)
 
@@ -282,6 +287,62 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         journey_time_data
     )
 
+    # -- MTR Bus Frequency --
+    mtrbus_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'LRTFeeder']
+    mtrbus_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(mtrbus_gov_routes_df['route_id'])]
+    mtrbus_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(mtrbus_gov_trips_df['trip_id'])]
+    mtrbus_stoptimes_df = generate_stop_times_for_agency(
+        'MTRB',
+        mtrbus_trips_df,
+        mtrbus_stoptimes_df,
+        mtrbus_gov_routes_df,
+        mtrbus_gov_trips_df,
+        mtrbus_gov_frequencies_df,
+        journey_time_data
+    )
+
+    # -- NLB Frequency --
+    nlb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'NLB']
+    nlb_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(nlb_gov_routes_df['route_id'])]
+    nlb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(nlb_gov_trips_df['trip_id'])]
+    nlb_stoptimes_df = generate_stop_times_for_agency(
+        'NLB',
+        nlb_trips_df,
+        nlb_stoptimes_df,
+        nlb_gov_routes_df,
+        nlb_gov_trips_df,
+        nlb_gov_frequencies_df,
+        journey_time_data
+    )
+
+    # -- GMB Frequency --
+    gmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'GMB']
+    gmb_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(gmb_gov_routes_df['route_id'])]
+    gmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(gmb_gov_trips_df['trip_id'])]
+    gmb_stoptimes_df = generate_stop_times_for_agency(
+        'GMB',
+        gmb_trips_df,
+        gmb_stoptimes_df,
+        gmb_gov_routes_df,
+        gmb_gov_trips_df,
+        gmb_gov_frequencies_df,
+        journey_time_data
+    )
+
+    # -- MTR Bus Frequency --
+    mtrbus_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'LRTFeeder']
+    mtrbus_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(mtrbus_gov_routes_df['route_id'])]
+    mtrbus_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(mtrbus_gov_trips_df['trip_id'])]
+    mtrbus_stoptimes_df = generate_stop_times_for_agency(
+        'MTRB',
+        mtrbus_trips_df,
+        mtrbus_stoptimes_df,
+        mtrbus_gov_routes_df,
+        mtrbus_gov_trips_df,
+        mtrbus_gov_frequencies_df,
+        journey_time_data
+    )
+
     # -- NLB Frequency --
     nlb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'NLB']
     nlb_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(nlb_gov_routes_df['route_id'])]
@@ -308,28 +369,16 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_kmb_stoptimes = kmb_stoptimes_df[stop_times_cols]
 
     # Standardize Citybus
-    ctb_stoptimes_df = ctb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
-    ctb_stoptimes_df['arrival_time'] = ''
-    ctb_stoptimes_df['departure_time'] = ''
-    final_ctb_stoptimes = ctb_stoptimes_df[stop_times_cols]
-
+    final_ctb_stoptimes = ctb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
+    
     # Standardize GMB
-    gmb_stoptimes_df = gmb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
-    gmb_stoptimes_df['arrival_time'] = ''
-    gmb_stoptimes_df['departure_time'] = ''
-    final_gmb_stoptimes = gmb_stoptimes_df[stop_times_cols]
+    final_gmb_stoptimes = gmb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
 
     # Standardize MTR Bus
-    mtrbus_stoptimes_df = mtrbus_stoptimes_df.rename(columns={'station_seqno': 'stop_sequence'})
-    mtrbus_stoptimes_df['arrival_time'] = ''
-    mtrbus_stoptimes_df['departure_time'] = ''
-    final_mtrbus_stoptimes = mtrbus_stoptimes_df[stop_times_cols]
+    final_mtrbus_stoptimes = mtrbus_stoptimes_df.rename(columns={'station_seqno': 'stop_sequence'})
 
     # Standardize NLB
-    nlb_stoptimes_df = nlb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
-    nlb_stoptimes_df['arrival_time'] = ''
-    nlb_stoptimes_df['departure_time'] = ''
-    final_nlb_stoptimes = nlb_stoptimes_df[stop_times_cols]
+    final_nlb_stoptimes = nlb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
 
     final_stop_times_df = pd.concat([final_kmb_stoptimes, final_ctb_stoptimes, final_gmb_stoptimes, final_mtrbus_stoptimes, final_nlb_stoptimes], ignore_index=True)
 
