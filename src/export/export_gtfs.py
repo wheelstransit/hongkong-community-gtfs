@@ -43,7 +43,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         .str.replace(r'\s*-\s*', ' - ', regex=True)
         .str.replace(r'([^\s])(\([A-Za-z0-9]+\))', r'\1 \2', regex=True)
     )
-    kmb_stops_gdf, kmb_duplicates_map = unify_stops_by_name_and_distance(kmb_stops_gdf, 'stop_name', 'stop_id')
+    kmb_stops_gdf, kmb_duplicates_map = unify_stops_by_name_and_distance(kmb_stops_gdf, 'stop_name', 'stop_id', silent=silent)
     kmb_stops_gdf['stop_lat'] = kmb_stops_gdf.geometry.y
     kmb_stops_gdf['stop_lon'] = kmb_stops_gdf.geometry.x
     kmb_stops_final = kmb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -52,7 +52,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     ctb_stops_gdf = gpd.read_postgis("SELECT * FROM citybus_stops", engine, geom_col='geometry')
     ctb_stops_gdf['stop_id'] = 'CTB-' + ctb_stops_gdf['stop'].astype(str)
     ctb_stops_gdf['stop_name'] = ctb_stops_gdf['name_en']
-    ctb_stops_gdf, ctb_duplicates_map = unify_stops_by_name_and_distance(ctb_stops_gdf, 'stop_name', 'stop_id')
+    ctb_stops_gdf, ctb_duplicates_map = unify_stops_by_name_and_distance(ctb_stops_gdf, 'stop_name', 'stop_id', silent=silent)
     ctb_stops_gdf['stop_lat'] = ctb_stops_gdf.geometry.y
     ctb_stops_gdf['stop_lon'] = ctb_stops_gdf.geometry.x
     ctb_stops_final = ctb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -61,7 +61,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     gmb_stops_gdf = gpd.read_postgis("SELECT * FROM gmb_stops", engine, geom_col='geometry')
     gmb_stops_gdf['stop_id'] = 'GMB-' + gmb_stops_gdf['stop_id'].astype(str)
     gmb_stops_gdf['stop_name'] = gmb_stops_gdf['stop_name_en']
-    gmb_stops_gdf, gmb_duplicates_map = unify_stops_by_name_and_distance(gmb_stops_gdf, 'stop_name', 'stop_id')
+    gmb_stops_gdf, gmb_duplicates_map = unify_stops_by_name_and_distance(gmb_stops_gdf, 'stop_name', 'stop_id', silent=silent)
     gmb_stops_gdf['stop_lat'] = gmb_stops_gdf.geometry.y
     gmb_stops_gdf['stop_lon'] = gmb_stops_gdf.geometry.x
     gmb_stops_final = gmb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -70,7 +70,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     mtrbus_stops_gdf = gpd.read_postgis("SELECT * FROM mtrbus_stops", engine, geom_col='geometry')
     mtrbus_stops_gdf['stop_id'] = 'MTRB-' + mtrbus_stops_gdf['stop_id'].astype(str)
     mtrbus_stops_gdf['stop_name'] = mtrbus_stops_gdf['name_en']
-    mtrbus_stops_gdf, mtrbus_duplicates_map = unify_stops_by_name_and_distance(mtrbus_stops_gdf, 'stop_name', 'stop_id')
+    mtrbus_stops_gdf, mtrbus_duplicates_map = unify_stops_by_name_and_distance(mtrbus_stops_gdf, 'stop_name', 'stop_id', silent=silent)
     mtrbus_stops_gdf['stop_lat'] = mtrbus_stops_gdf.geometry.y
     mtrbus_stops_gdf['stop_lon'] = mtrbus_stops_gdf.geometry.x
     mtrbus_stops_final = mtrbus_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -79,7 +79,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     nlb_stops_gdf = gpd.read_postgis("SELECT * FROM nlb_stops", engine, geom_col='geometry')
     nlb_stops_gdf['stop_id'] = 'NLB-' + nlb_stops_gdf['stopId'].astype(str)
     nlb_stops_gdf['stop_name'] = nlb_stops_gdf['stopName_e']
-    nlb_stops_gdf, nlb_duplicates_map = unify_stops_by_name_and_distance(nlb_stops_gdf, 'stop_name', 'stop_id')
+    nlb_stops_gdf, nlb_duplicates_map = unify_stops_by_name_and_distance(nlb_stops_gdf, 'stop_name', 'stop_id', silent=silent)
     nlb_stops_gdf['stop_lat'] = nlb_stops_gdf.geometry.y
     nlb_stops_gdf['stop_lon'] = nlb_stops_gdf.geometry.x
     nlb_stops_final = nlb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -189,6 +189,11 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     gmb_stoptimes_df['trip_id'] = 'GMB-' + gmb_stoptimes_df['route_id'].astype(str) + '-' + gmb_stoptimes_df['route_seq'].astype(str)
     gmb_stoptimes_df['stop_id'] = 'GMB-' + gmb_stoptimes_df['stop_id'].astype(str)
     gmb_stoptimes_df['stop_id'] = gmb_stoptimes_df['stop_id'].replace(gmb_duplicates_map)
+
+    print("GMB Trips DF")
+    print(gmb_trips_df.head())
+    print("GMB Stoptimes DF")
+    print(gmb_stoptimes_df.head())
 
     # -- MTR Bus --
     if not silent:

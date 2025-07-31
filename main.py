@@ -191,8 +191,7 @@ def main():
     export_unified_feed(
         engine=engine,
         output_dir=os.path.join("output", "gtfs"),
-        journey_time_data=raw_journey_time_data,
-        silent=args.silent
+        journey_time_data=raw_journey_time_data
     )
 
     if not args.silent:

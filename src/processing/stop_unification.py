@@ -3,7 +3,7 @@ from tqdm import tqdm
 import pandas as pd
 from datetime import datetime, timedelta
 
-def unify_stops_by_name_and_distance(stops_gdf: gpd.GeoDataFrame, name_col: str, stop_id_col: str, distance_threshold_meters: float = 2.0):
+def unify_stops_by_name_and_distance(stops_gdf: gpd.GeoDataFrame, name_col: str, stop_id_col: str, distance_threshold_meters: float = 2.0, silent: bool = False):
     """
     Unifies stops within a single GeoDataFrame that have the same name and are within a specified distance.
     """
