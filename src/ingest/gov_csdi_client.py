@@ -9,8 +9,9 @@ FGDB_URL = "https://static.csdi.gov.hk/csdi-webpage/download/7faa97a82780505c967
 TEMP_DIR = "/tmp/bus_routes_data"
 LAYER_NAME = "FB_ROUTE_LINE"
 
-def fetch_bus_routes_data():
-    print("Fetching bus routes data from CSDI FGDB source...")
+def fetch_bus_routes_data(silent=False):
+    if not silent:
+        print("Fetching bus routes data from CSDI FGDB source...")
 
     if os.path.exists(TEMP_DIR):
         shutil.rmtree(TEMP_DIR)

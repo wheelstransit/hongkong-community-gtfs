@@ -47,8 +47,9 @@ def fetch_all_route_stops():
     return fetch_and_parse_csv(STOPS_URL, "route-stops")
 
 
-def fetch_all_stops():
-    print("\nProcessing raw data to generate a list of unique stops...")
+def fetch_all_stops(silent=False):
+    if not silent:
+        print("\nProcessing raw data to generate a list of unique stops...")
     route_stops_data = fetch_all_route_stops()
     if not route_stops_data:
         print("Could not fetch route-stop data, cannot generate unique stops list.")

@@ -470,7 +470,7 @@ def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_j
             print(f"Loaded {len(hourly_journey_time_df)} records into 'hourly_journey_time_data' table.")
 
 
-def process_and_load_osm_data(raw_osm_data, engine):
+def process_and_load_osm_data(raw_osm_data, engine, silent=False):
     # This is a placeholder for the actual data processing and loading logic
     print("Processing and loading OSM data...")
     if raw_osm_data and 'elements' in raw_osm_data:
@@ -483,7 +483,7 @@ def process_and_load_osm_data(raw_osm_data, engine):
     # 5. Load the cleaned and structured data into the database
     print("  - Placeholder: OSM data processing not yet implemented.")
 
-def process_and_load_tramway_data(raw_routes: list, raw_stops: list, engine: Engine):
+def process_and_load_tramway_data(raw_routes: list, raw_stops: list, engine: Engine, silent=False):
     """
     Process and load Tramway routes and stops (with multilingual fields, no location data) into the database.
     """

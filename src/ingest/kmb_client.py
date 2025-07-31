@@ -38,9 +38,10 @@ def fetch_all_stops():
         print("Error: 'data' key not found in the response JSON.")
         return None
 
-def fetch_all_route_stops():
+def fetch_all_route_stops(silent=False):
     endpoint = f"{BASE_URL}/route-stop"
-    print("Fetching all KMB route-stop sequences...")
+    if not silent:
+        print("Fetching all KMB route-stop sequences...")
 
     try:
         response = requests.get(endpoint, timeout=60) # longer timeout bc of large data

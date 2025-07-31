@@ -58,9 +58,10 @@ def fetch_fare_data():
         print(f"Error fetching fare data: {e}")
         return None
 
-def fetch_calendar_data():
+def fetch_calendar_data(silent=False):
     """Fetches the calendar data."""
-    print("Fetching calendar data from Gov GTFS source...")
+    if not silent:
+        print("Fetching calendar data from Gov GTFS source...")
     try:
         df = pd.read_csv(CALENDAR_URL)
         print(f"Successfully fetched {len(df)} calendar records.")

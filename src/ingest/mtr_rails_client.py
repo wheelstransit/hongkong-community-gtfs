@@ -9,8 +9,9 @@ LIGHT_RAIL_ROUTES_AND_STOPS_URL = "https://opendata.mtr.com.hk/data/light_rail_r
 LIGHT_RAIL_FARES_URL = "https://opendata.mtr.com.hk/data/light_rail_fares.csv"
 AIRPORT_EXPRESS_FARES_URL = "https://opendata.mtr.com.hk/data/airport_express_fares.csv"
 
-def fetch_and_parse_csv(url: str, encoding: str = "utf-8-sig") -> List[Dict]:
-    print(f"Fetching CSV from {url} ...")
+def fetch_and_parse_csv(url: str, encoding: str = "utf-8-sig", silent=False) -> List[Dict]:
+    if not silent:
+        print(f"Fetching CSV from {url} ...")
     try:
         response = requests.get(url, timeout=30)
         response.raise_for_status()

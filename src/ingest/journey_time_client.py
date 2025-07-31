@@ -43,8 +43,9 @@ def worker_fetch_hourly_journey_time_data(task):
     weekday, hour = task
     return weekday, hour, fetch_hourly_journey_time_data(weekday, hour)
 
-def fetch_all_hourly_journey_time_data_threaded(max_workers=20):
-    print(f"Fetching all hourly journey time data with up to {max_workers} threads...")
+def fetch_all_hourly_journey_time_data_threaded(max_workers=20, silent=False):
+    if not silent:
+        print(f"Fetching all hourly journey time data with up to {max_workers} threads...")
 
     # Create tasks for all weekday-hour combinations
     tasks = []

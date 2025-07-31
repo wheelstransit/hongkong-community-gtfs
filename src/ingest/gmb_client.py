@@ -152,15 +152,17 @@ class GMBClient:
                             'stop_name_sc': stop_info.get('name_sc'),
                         })
 
-        print(f"\nFound {len(all_route_stops)} route-stop records.")
-        print(f"Found {len(unique_stop_ids)} unique stops to fetch details for.")
+        if not silent:
+            print(f"\nFound {len(all_route_stops)} route-stop records.")
+            print(f"Found {len(unique_stop_ids)} unique stops to fetch details for.")
 
-        print(f"\n--- Phase 2: Fetching details for {len(unique_stop_ids)} unique stops (multithreaded) ---")
+            print(f"\n--- Phase 2: Fetching details for {len(unique_stop_ids)} unique stops (multithreaded) ---")
         all_stops_details = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_stop = {executor.submit(self.get_stop_details, stop_id): stop_id for stop_id in unique_stop_ids}
 
-            for future in tqdm(concurrent.futures.as_completed(future_to_stop), total=len(unique_stop_ids), desc="Fetching stop details"):
+            progress_bar = tqdm(concurrent.futures.as_completed(future_to_stop), total=len(unique_stop_ids), desc="Fetching stop details", disable=silent)
+            for future in progress_bar:
                 stop_details = future.result()
                 if stop_details:
                     all_stops_details.append(stop_details)

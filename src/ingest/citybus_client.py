@@ -92,9 +92,10 @@ def fetch_stop_details(stop_id):
 def worker_fetch_stop_details(stop_id):
     return fetch_stop_details(stop_id)
 
-def fetch_all_stop_details_threaded(list_of_route_stops, max_workers=20):
+def fetch_all_stop_details_threaded(list_of_route_stops, max_workers=20, silent=False):
     # list of route stops should be the result of fetch_all_stops_threaded
-    print(f"\nFetching stop details with up to {max_workers} threads...")
+    if not silent:
+        print(f"\nFetching stop details with up to {max_workers} threads...")
     if not list_of_route_stops:
         print("No stop IDs provided, cannot fetch stop details.")
         return None

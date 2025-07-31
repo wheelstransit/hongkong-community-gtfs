@@ -16,7 +16,7 @@ def unify_stops_by_name_and_distance(stops_gdf: gpd.GeoDataFrame, name_col: str,
     processed_indices = set()
     duplicates_map = {}
     
-    for index, stop in tqdm(projected_gdf.iterrows(), total=projected_gdf.shape[0], desc="Unifying stops"):
+    for index, stop in tqdm(projected_gdf.iterrows(), total=projected_gdf.shape[0], desc="Unifying stops", disable=silent):
         if index in processed_indices:
             continue
 

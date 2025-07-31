@@ -4,15 +4,17 @@ from sqlalchemy.engine import Engine
 import os
 import zipfile
 from src.processing.stop_unification import unify_stops_by_name_and_distance
-from src.processing.stop_times import generate_stop_times_for_agency
+from src.processing.stop_times import generate_stop_times_for_agency_optimized as generate_stop_times_for_agency
 
-def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict):
-    print("--- Starting Unified GTFS Export Process ---")
+def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict, silent: bool = False):
+    if not silent:
+        print("--- Starting Unified GTFS Export Process ---")
 
     final_output_dir = os.path.join(output_dir, "unified_feed")
     os.makedirs(final_output_dir, exist_ok=True)
 
-    print("Building agency.txt...")
+    if not silent:
+        print("Building agency.txt...")
     agencies = [
         {'agency_id': 'KMB', 'agency_name': 'Kowloon Motor Bus', 'agency_url': 'https://kmb.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'zh-Hant'},
         {'agency_id': 'CTB', 'agency_name': 'Citybus', 'agency_url': 'https://www.citybus.com.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'zh-Hant'},
@@ -29,7 +31,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     agency_df = pd.DataFrame(agencies)
     agency_df.to_csv(os.path.join(final_output_dir, 'agency.txt'), index=False)
 
-    print("Building stops.txt...")
+    if not silent:
+        print("Building stops.txt...")
 
     # KMB
     kmb_stops_gdf = gpd.read_postgis("SELECT * FROM kmb_stops", engine, geom_col='geometry')
@@ -90,13 +93,15 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         nlb_stops_final
     ], ignore_index=True)
     all_stops_df.to_csv(os.path.join(final_output_dir, 'stops.txt'), index=False)
-    print(f"Generated stops.txt with {len(all_stops_df)} total stops.")
+    if not silent:
+        print(f"Generated stops.txt with {len(all_stops_df)} total stops.")
 
     # --- 3. Build `routes.txt`, `trips.txt`, `stop_times.txt` ---
     # This process will be repeated for each agency, then concatenated.
 
     # -- KMB --
-    print("Processing KMB routes, trips, and stop_times...")
+    if not silent:
+        print("Processing KMB routes, trips, and stop_times...")
     kmb_routes_df = pd.read_sql("SELECT * FROM kmb_routes", engine)
 
     # --- Parse unique_route_id into route, bound, service_type ---
@@ -137,7 +142,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     kmb_stoptimes_df['stop_id'] = kmb_stoptimes_df['stop_id'].replace(kmb_duplicates_map)
 
     # -- Citybus --
-    print("Processing Citybus routes, trips, and stop_times...")
+    if not silent:
+        print("Processing Citybus routes, trips, and stop_times...")
     ctb_routes_df = pd.read_sql("SELECT * FROM citybus_routes", engine)
     ctb_routes_df['route_id'] = 'CTB-' + ctb_routes_df['unique_route_id']
     ctb_routes_df['agency_id'] = 'CTB'
@@ -161,7 +167,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     ctb_stoptimes_df['stop_id'] = ctb_stoptimes_df['stop_id'].replace(ctb_duplicates_map)
 
     # -- GMB --
-    print("Processing GMB routes, trips, and stop_times...")
+    if not silent:
+        print("Processing GMB routes, trips, and stop_times...")
     gmb_routes_df = pd.read_sql("SELECT * FROM gmb_routes", engine)
     gmb_routes_df['route_id'] = 'GMB-' + gmb_routes_df['unique_route_id']
     gmb_routes_df['agency_id'] = 'GMB'
@@ -184,13 +191,15 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     gmb_stoptimes_df['stop_id'] = gmb_stoptimes_df['stop_id'].replace(gmb_duplicates_map)
 
     # -- MTR Bus --
-    print("Processing MTR Bus routes, trips, and stop_times...")
+    if not silent:
+        print("Processing MTR Bus routes, trips, and stop_times...")
     mtrbus_routes_df = pd.read_sql("SELECT * FROM mtrbus_routes", engine)
     mtrbus_stop_sequences_df = pd.read_sql("SELECT * FROM mtrbus_stop_sequences", engine)
     mtrbus_routes_df = mtrbus_routes_df.merge(mtrbus_stop_sequences_df[['route_id', 'direction']].drop_duplicates(), on='route_id')
+    mtrbus_routes_df['unique_route_id'] = mtrbus_routes_df['route_id']
     mtrbus_routes_df['route_id'] = 'MTRB-' + mtrbus_routes_df['unique_route_id'] + '-' + mtrbus_routes_df['direction']
     mtrbus_routes_df['agency_id'] = 'MTRB'
-    mtrbus_routes_df['route_short_name'] = mtrbus_routes_df['route_id']
+    mtrbus_routes_df['route_short_name'] = mtrbus_routes_df['unique_route_id']
     mtrbus_routes_df['route_long_name'] = mtrbus_routes_df['route_name_eng']
     mtrbus_routes_df['route_type'] = 3
     final_mtrbus_routes = mtrbus_routes_df[['route_id', 'agency_id', 'route_short_name', 'route_long_name', 'route_type']].copy()
@@ -199,7 +208,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         'route_id': mtrbus_routes_df['route_id'],
         'service_id': 'MTRB-' + mtrbus_routes_df['route_id'],
         'trip_id': mtrbus_routes_df['route_id'],
-        'route_short_name': mtrbus_routes_df['route_id'],
+        'route_short_name': mtrbus_routes_df['route_short_name'],
         'direction_id': mtrbus_routes_df['direction'].map({'O': 0, 'I': 1}).fillna(-1).astype(int)
     })
 
@@ -209,7 +218,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     mtrbus_stoptimes_df['stop_id'] = mtrbus_stoptimes_df['stop_id'].replace(mtrbus_duplicates_map)
 
     # -- NLB --
-    print("Processing NLB routes, trips, and stop_times...")
+    if not silent:
+        print("Processing NLB routes, trips, and stop_times...")
     nlb_routes_df = pd.read_sql("SELECT * FROM nlb_routes", engine)
     nlb_routes_df['route_id'] = 'NLB-' + nlb_routes_df['routeId'].astype(str)
     nlb_routes_df['agency_id'] = 'NLB'
@@ -256,7 +266,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         kmb_gov_routes_df,
         kmb_gov_trips_df,
         kmb_gov_frequencies_df,
-        journey_time_data
+        journey_time_data,
+        silent=silent
     )
 
     # -- Citybus Frequency --
@@ -270,7 +281,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         ctb_gov_routes_df,
         ctb_gov_trips_df,
         ctb_gov_frequencies_df,
-        journey_time_data
+        journey_time_data,
+        silent=silent
     )
 
     # -- GMB Frequency --
@@ -284,7 +296,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         gmb_gov_routes_df,
         gmb_gov_trips_df,
         gmb_gov_frequencies_df,
-        journey_time_data
+        journey_time_data,
+        silent=silent
     )
 
     # -- MTR Bus Frequency --
@@ -298,7 +311,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         mtrbus_gov_routes_df,
         mtrbus_gov_trips_df,
         mtrbus_gov_frequencies_df,
-        journey_time_data
+        journey_time_data,
+        silent=silent
     )
 
     # -- NLB Frequency --
@@ -312,53 +326,13 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         nlb_gov_routes_df,
         nlb_gov_trips_df,
         nlb_gov_frequencies_df,
-        journey_time_data
-    )
-
-    # -- GMB Frequency --
-    gmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'GMB']
-    gmb_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(gmb_gov_routes_df['route_id'])]
-    gmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(gmb_gov_trips_df['trip_id'])]
-    gmb_stoptimes_df = generate_stop_times_for_agency(
-        'GMB',
-        gmb_trips_df,
-        gmb_stoptimes_df,
-        gmb_gov_routes_df,
-        gmb_gov_trips_df,
-        gmb_gov_frequencies_df,
-        journey_time_data
-    )
-
-    # -- MTR Bus Frequency --
-    mtrbus_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'LRTFeeder']
-    mtrbus_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(mtrbus_gov_routes_df['route_id'])]
-    mtrbus_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(mtrbus_gov_trips_df['trip_id'])]
-    mtrbus_stoptimes_df = generate_stop_times_for_agency(
-        'MTRB',
-        mtrbus_trips_df,
-        mtrbus_stoptimes_df,
-        mtrbus_gov_routes_df,
-        mtrbus_gov_trips_df,
-        mtrbus_gov_frequencies_df,
-        journey_time_data
-    )
-
-    # -- NLB Frequency --
-    nlb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'] == 'NLB']
-    nlb_gov_trips_df = gov_trips_df[gov_trips_df['route_id'].isin(nlb_gov_routes_df['route_id'])]
-    nlb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(nlb_gov_trips_df['trip_id'])]
-    nlb_stoptimes_df = generate_stop_times_for_agency(
-        'NLB',
-        nlb_trips_df,
-        nlb_stoptimes_df,
-        nlb_gov_routes_df,
-        nlb_gov_trips_df,
-        nlb_gov_frequencies_df,
-        journey_time_data
+        journey_time_data,
+        silent=silent
     )
 
     # -- Combine & Standardize--
-    print("Combining and standardizing data for final GTFS files...")
+    if not silent:
+        print("Combining and standardizing data for final GTFS files...")
     final_routes_df = pd.concat([final_kmb_routes, final_ctb_routes, final_gmb_routes, final_mtrbus_routes, final_nlb_routes], ignore_index=True)
     final_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df], ignore_index=True)
 
@@ -370,7 +344,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
 
     # Standardize Citybus
     final_ctb_stoptimes = ctb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
-    
+
     # Standardize GMB
     final_gmb_stoptimes = gmb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
 
@@ -392,10 +366,12 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     # These will be read from the gov_gtfs tables and mapped to the new prefixed IDs.
 
     # --- 5. Zip the feed ---
-    print("Zipping the unified GTFS feed...")
+    if not silent:
+        print("Zipping the unified GTFS feed...")
     zip_path = os.path.join(output_dir, 'unified-agency-specific-stops.gtfs.zip')
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         for filename in os.listdir(final_output_dir):
             zf.write(os.path.join(final_output_dir, filename), arcname=filename)
 
-    print(f"--- Unified GTFS Build Complete. Output at {zip_path} ---")
+    if not silent:
+        print(f"--- Unified GTFS Build Complete. Output at {zip_path} ---")

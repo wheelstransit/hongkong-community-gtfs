@@ -23,11 +23,13 @@ def build_overpass_query(bbox):
     """
     return query
 
-def fetch_osm_routes():
-    print("Building Overpass query for Hong Kong public transit routes...")
+def fetch_osm_routes(silent=False):
+    if not silent:
+        print("Building Overpass query for Hong Kong public transit routes...")
     query = build_overpass_query(HONG_KONG_BBOX)
 
-    print("Fetching data from Overpass API... (This may take a few minutes)")
+    if not silent:
+        print("Fetching data from Overpass API... (This may take a few minutes)")
     try:
         response = requests.post(OVERPASS_URL, data={"data": query}, timeout=300)
         response.raise_for_status()

@@ -35,22 +35,24 @@ def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, *args, *
 
 def main():
     parser = argparse.ArgumentParser(description="Hong Kong Community GTFS Data Pipeline")
-    print("test")
     parser.add_argument('--force-ingest', action='store_true', help='Force re-ingestion of data, ignoring cache.')
+    parser.add_argument('--silent', action='store_true', help='Run in silent mode, suppressing progress bars.')
     args = parser.parse_args()
 
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR)
 
-    print("Starting")
+    if not args.silent:
+        print("Starting")
     engine = get_db_engine()
 
     # INGEST
     # KMB
-    raw_kmb_routes = fetch_or_load_from_cache("kmb_routes", kmb_client.fetch_all_routes, args.force_ingest)
-    raw_kmb_stops = fetch_or_load_from_cache("kmb_stops", kmb_client.fetch_all_stops, args.force_ingest)
-    raw_kmb_route_stops = fetch_or_load_from_cache("kmb_route_stops", kmb_client.fetch_all_route_stops, args.force_ingest)
-    print(f"KMB data - Routes: {len(raw_kmb_routes) if raw_kmb_routes else 0}, Stops: {len(raw_kmb_stops) if raw_kmb_stops else 0}, Route-stops: {len(raw_kmb_route_stops) if raw_kmb_route_stops else 0}")
+    raw_kmb_routes = fetch_or_load_from_cache("kmb_routes", kmb_client.fetch_all_routes, args.force_ingest, silent=args.silent)
+    raw_kmb_stops = fetch_or_load_from_cache("kmb_stops", kmb_client.fetch_all_stops, args.force_ingest, silent=args.silent)
+    raw_kmb_route_stops = fetch_or_load_from_cache("kmb_route_stops", kmb_client.fetch_all_route_stops, args.force_ingest, silent=args.silent)
+    if not args.silent:
+        print(f"KMB data - Routes: {len(raw_kmb_routes) if raw_kmb_routes else 0}, Stops: {len(raw_kmb_stops) if raw_kmb_stops else 0}, Route-stops: {len(raw_kmb_route_stops) if raw_kmb_route_stops else 0}")
 
     # Government GTFS
     raw_gov_frequencies = fetch_or_load_from_cache("gov_frequencies", gov_gtfs_client.fetch_frequencies_data, args.force_ingest)
@@ -71,17 +73,19 @@ def main():
     raw_mtrbus_routes = fetch_or_load_from_cache("mtrbus_routes", mtrbus_client.fetch_all_routes, args.force_ingest)
     raw_mtrbus_stops = fetch_or_load_from_cache("mtrbus_stops", mtrbus_client.fetch_all_stops, args.force_ingest)
     raw_mtrbus_route_stops = fetch_or_load_from_cache("mtrbus_route_stops", mtrbus_client.fetch_all_route_stops, args.force_ingest)
-    raw_mtrbus_fares = fetch_or_load_from_cache("mtrbus_fares", mtrbus_client.fetch_all_fares, args.force_ingest)
-    print(f"MTR Bus data - Routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, Stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, Route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}, Fares: {len(raw_mtrbus_fares) if raw_mtrbus_fares else 0}")
+    raw_mtrbus_fares = fetch_or_load_from_cache("mtrbus_fares", mtrbus_client.fetch_all_fares, args.force_ingest, silent=args.silent)
+    if not args.silent:
+        print(f"MTR Bus data - Routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, Stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, Route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}, Fares: {len(raw_mtrbus_fares) if raw_mtrbus_fares else 0}")
 
     raw_mtr_lines_and_stations = fetch_or_load_from_cache("mtr_lines_and_stations", mtr_rails_client.fetch_mtr_lines_and_stations, args.force_ingest)
     raw_mtr_lines_fares = fetch_or_load_from_cache("mtr_lines_fares", mtr_rails_client.fetch_mtr_lines_fares, args.force_ingest)
     raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest)
     raw_light_rail_fares = fetch_or_load_from_cache("light_rail_fares", mtr_rails_client.fetch_light_rail_fares, args.force_ingest)
-    raw_airport_express_fares = fetch_or_load_from_cache("airport_express_fares", mtr_rails_client.fetch_airport_express_fares, args.force_ingest)
-    print(f"MTR Rail data - Lines/Stations: {len(raw_mtr_lines_and_stations) if raw_mtr_lines_and_stations else 0}, Fares: {len(raw_mtr_lines_fares) if raw_mtr_lines_fares else 0}")
-    print(f"Light Rail data - Routes/Stops: {len(raw_light_rail_routes_and_stops) if raw_light_rail_routes_and_stops else 0}, Fares: {len(raw_light_rail_fares) if raw_light_rail_fares else 0}")
-    print(f"Airport Express Fares: {len(raw_airport_express_fares) if raw_airport_express_fares else 0}")
+    raw_airport_express_fares = fetch_or_load_from_cache("airport_express_fares", mtr_rails_client.fetch_airport_express_fares, args.force_ingest, silent=args.silent)
+    if not args.silent:
+        print(f"MTR Rail data - Lines/Stations: {len(raw_mtr_lines_and_stations) if raw_mtr_lines_and_stations else 0}, Fares: {len(raw_mtr_lines_fares) if raw_mtr_lines_fares else 0}")
+        print(f"Light Rail data - Routes/Stops: {len(raw_light_rail_routes_and_stops) if raw_light_rail_routes_and_stops else 0}, Fares: {len(raw_light_rail_fares) if raw_light_rail_fares else 0}")
+        print(f"Airport Express Fares: {len(raw_airport_express_fares) if raw_airport_express_fares else 0}")
 
 
 
@@ -180,16 +184,19 @@ def main():
 
     process_and_load_osm_data(
         raw_osm_data=raw_osm_routes,
-        engine=engine
+        engine=engine,
+        silent=args.silent
     )
 
     export_unified_feed(
         engine=engine,
         output_dir=os.path.join("output", "gtfs"),
-        journey_time_data=raw_journey_time_data
+        journey_time_data=raw_journey_time_data,
+        silent=args.silent
     )
 
-    print("processing complete")
+    if not args.silent:
+        print("processing complete")
 
 
 if __name__ == "__main__":
