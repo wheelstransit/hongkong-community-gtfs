@@ -15,7 +15,7 @@ def generate_stop_times_for_agency_optimized(
     agency_trips_df: pd.DataFrame,
     agency_stoptimes_df: pd.DataFrame,
     gov_routes_df: pd.DataFrame,
-    gov_trips_df: pd.DataFrame,  # Added missing parameter
+    gov_trips_df: pd.DataFrame,
     gov_frequencies_df: pd.DataFrame,
     journey_time_data: dict,
     silent: bool = False
@@ -23,7 +23,7 @@ def generate_stop_times_for_agency_optimized(
     if not silent:
         print(f"Generating stop times for {agency_id}...")
 
-    if agency_trips_df.empty or agency_stoptimes_df.empty or gov_frequencies_df.empty:
+    if agency_trips_df.empty or agency_stoptimes_df.empty:
         if not silent:
             print(f"One of the dataframes for {agency_id} is empty. Skipping.")
         return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
@@ -43,7 +43,6 @@ def generate_stop_times_for_agency_optimized(
     DEFAULT_JOURNEY_TIME_SECS = 120
     trip_patterns = {}
     
-    # Determine the correct grouping key for patterns (it might be unique_route_id, or a combination)
     if agency_id == 'KMB':
         pattern_key_cols = ['route', 'bound']
     elif agency_id == 'CTB':
@@ -57,13 +56,11 @@ def generate_stop_times_for_agency_optimized(
     else:
         pattern_key_cols = ['trip_id']
 
-    # Ensure all key columns exist
     valid_pattern_key_cols = [col for col in pattern_key_cols if col in agency_stoptimes_df.columns]
     if not valid_pattern_key_cols:
          if not silent:
             print(f"Warning: Could not determine pattern key for {agency_id}. Cannot generate stop times.")
          return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
-
 
     grouped_stops = agency_stoptimes_df.sort_values(stop_seq_col).groupby(valid_pattern_key_cols)
 
@@ -78,7 +75,6 @@ def generate_stop_times_for_agency_optimized(
                 time = int(journey_time_data.get(from_stop_id_unprefixed, {}).get(to_stop_id_unprefixed, DEFAULT_JOURNEY_TIME_SECS))
             except (ValueError, TypeError):
                 time = DEFAULT_JOURNEY_TIME_SECS
-            journey_times_sec.append(time)
         
         trip_patterns[name] = {
             'stop_ids': np.array(stops),
@@ -86,39 +82,32 @@ def generate_stop_times_for_agency_optimized(
             'cumulative_offsets_sec': np.cumsum(journey_times_sec)
         }
 
-    # --- Step 2: Vectorized Generation (now driven by our generated trips) ---
+    # --- Step 2: Vectorized Generation ---
     st_trip_ids = []
     st_arrival_times = []
     st_departure_times = []
     st_stop_ids = []
     st_stop_sequences = []
 
-    # Merge our generated trips with the government frequency data
-    # This is the key change: we link on the 'original_service_id'
-    # Link agency trips to gov trips to find the correct gov trip_id for frequency lookup
     agency_trips_with_gov_info = agency_trips_df.merge(
-        gov_trips_df,
-        left_on=['route_short_name', 'direction_id', 'original_service_id'],
-        right_on=['route_short_name', 'direction_id', 'service_id'],
-        how='left',
-        suffixes=['_agency', '_gov']
-    )
+    gov_trips_df,
+    left_on=['route_short_name', 'original_service_id'],
+    right_on=['route_short_name', 'service_id'],
+    how='left',
+    suffixes=['_agency', '_gov']
+)
 
-    # Now link to frequencies using the correct government trip_id
     trips_with_freq = agency_trips_with_gov_info.merge(
         gov_frequencies_df,
         left_on='trip_id_gov',
         right_on='trip_id',
-        how='inner'
+        how='left'
     )
 
-    # The main loop now iterates over our generated trips, which have been pre-matched with frequencies.
     for trip_row in tqdm(trips_with_freq.itertuples(), total=trips_with_freq.shape[0], desc=f"Generating {agency_id} stop times", disable=silent):
-        # Determine the key to look up the stop pattern
         if agency_id == 'KMB':
             pattern_lookup_key = (trip_row.route_short_name, trip_row.bound)
         elif agency_id == 'CTB':
-            # Reconstruct the unique_route_id used for grouping
             direction_str = 'outbound' if trip_row.direction_id == 0 else 'inbound'
             pattern_lookup_key = f"{trip_row.route_short_name}-{direction_str}"
         elif agency_id == 'GMB':
@@ -127,21 +116,33 @@ def generate_stop_times_for_agency_optimized(
             direction_str = 'O' if trip_row.direction_id == 0 else 'I'
             pattern_lookup_key = (trip_row.route_short_name, direction_str)
         elif agency_id == 'NLB':
-            pattern_lookup_key = (trip_row.route_short_name, trip_row.direction_id)
+            direction_id = getattr(trip_row, 'direction_id_agency', None)
+            if direction_id is None:
+                direction_id = getattr(trip_row, 'direction_id', 0)
+            pattern_lookup_key = (trip_row.route_short_name, direction_id)
         else:
-            # Fallback for other agencies - this might need refinement
-            pattern_lookup_key = trip_row.trip_id_agency # Corrected from trip_id
+            pattern_lookup_key = trip_row.trip_id_agency
 
         pattern = trip_patterns.get(pattern_lookup_key)
         if not pattern:
             continue
 
+        start_time_str = getattr(trip_row, 'start_time', '06:00:00')
+        end_time_str = getattr(trip_row, 'end_time', '23:00:00')
+        headway_secs_val = getattr(trip_row, 'headway_secs', 1200)
+
+        if pd.isna(start_time_str): start_time_str = '06:00:00'
+        if pd.isna(end_time_str): end_time_str = '23:00:00'
+        if pd.isna(headway_secs_val): headway_secs_val = 1200
+
         try:
-            start_time_secs = pd.to_timedelta(trip_row.start_time).total_seconds()
-            end_time_secs = pd.to_timedelta(trip_row.end_time).total_seconds()
-            headway_secs = int(trip_row.headway_secs)
-        except (ValueError, TypeError, KeyError):
-            continue
+            start_time_secs = pd.to_timedelta(start_time_str).total_seconds()
+            end_time_secs = pd.to_timedelta(end_time_str).total_seconds()
+            headway_secs = int(headway_secs_val)
+        except (ValueError, TypeError):
+            start_time_secs = pd.to_timedelta('06:00:00').total_seconds()
+            end_time_secs = pd.to_timedelta('23:00:00').total_seconds()
+            headway_secs = 1200
 
         if headway_secs == 0: continue
 
@@ -149,24 +150,18 @@ def generate_stop_times_for_agency_optimized(
         if all_trip_start_times_secs.size == 0:
             continue
 
-        # Use broadcasting to calculate all stop times for all trips in the frequency block
         arrival_times_secs = pattern['cumulative_offsets_sec'][:, np.newaxis] + all_trip_start_times_secs
 
         num_trips_in_block = len(all_trip_start_times_secs)
         num_stops = len(pattern['stop_ids'])
 
-        # Repeat the trip_id for each stop in each trip instance
-        st_trip_ids.extend([trip_row.trip_id_agency] * (num_stops * num_trips_in_block)) # Corrected from trip_id
-
-        # Tile the stop and sequence arrays for all trip instances
+        st_trip_ids.extend([trip_row.trip_id_agency] * (num_stops * num_trips_in_block))
         st_stop_ids.extend(np.tile(pattern['stop_ids'], num_trips_in_block).tolist())
         st_stop_sequences.extend(np.tile(pattern['sequences'], num_trips_in_block).tolist())
 
-        # Vectorized time formatting
         flat_arrival_times = arrival_times_secs.flatten(order='F').astype(int)
         tds = pd.to_timedelta(flat_arrival_times, unit='s')
 
-        # This is a more robust way to format HH:MM:SS for hours > 23
         components = tds.components
         hours = components.days * 24 + components.hours
         minutes = components.minutes
