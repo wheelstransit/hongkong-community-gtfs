@@ -2,6 +2,7 @@ services:
   db:
     image: postgis/postgis:13-3.1
     restart: always
+    user: postgres
     environment:
       - POSTGRES_DB=gtfs_hk
       - POSTGRES_USER=user
@@ -10,7 +11,8 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
-
+    networks:
+      - gtfs_network
   app:
     build: .
     command: tail -f /dev/null
@@ -21,6 +23,11 @@ services:
     volumes:
       - ./output:/app/output:z
       - cache_data:/app/.cache:z
+    networks:
+      - gtfs_network
+
+networks:
+  gtfs_network:
 
 volumes:
   pg_data:

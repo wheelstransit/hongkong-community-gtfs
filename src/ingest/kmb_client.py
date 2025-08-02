@@ -2,40 +2,46 @@ import requests
 
 BASE_URL = "https://data.etabus.gov.hk/v1/transport/kmb"
 
-def fetch_all_routes():
+def fetch_all_routes(silent=False):
     endpoint = f"{BASE_URL}/route"
-    print("Fetching all KMB routes...")
+    if not silent:
+        print("Fetching all KMB routes...")
 
     try:
         response = requests.get(endpoint, timeout=30)
         response.raise_for_status()
         data = response.json().get('data')
-        if data is not None:
+        if data is not None and not silent:
             print(f"Successfully fetched {len(data)} routes.")
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching KMB routes: {e}")
+        if not silent:
+            print(f"Error fetching KMB routes: {e}")
         return None
     except KeyError:
-        print("Error: 'data' key not found in the response JSON.")
+        if not silent:
+            print("Error: 'data' key not found in the response JSON.")
         return None
 
-def fetch_all_stops():
+def fetch_all_stops(silent=False):
     endpoint = f"{BASE_URL}/stop"
-    print("Fetching all KMB stops...")
+    if not silent:
+        print("Fetching all KMB stops...")
 
     try:
         response = requests.get(endpoint, timeout=30)
         response.raise_for_status()
         data = response.json().get('data')
-        if data is not None:
+        if data is not None and not silent:
             print(f"Successfully fetched {len(data)} stops.")
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching KMB stops: {e}")
+        if not silent:
+            print(f"Error fetching KMB stops: {e}")
         return None
     except KeyError:
-        print("Error: 'data' key not found in the response JSON.")
+        if not silent:
+            print("Error: 'data' key not found in the response JSON.")
         return None
 
 def fetch_all_route_stops(silent=False):
@@ -47,14 +53,16 @@ def fetch_all_route_stops(silent=False):
         response = requests.get(endpoint, timeout=60) # longer timeout bc of large data
         response.raise_for_status()
         data = response.json().get('data')
-        if data is not None:
+        if data is not None and not silent:
             print(f"Successfully fetched {len(data)} route-stop records.")
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching KMB route-stops: {e}")
+        if not silent:
+            print(f"Error fetching KMB route-stops: {e}")
         return None
     except KeyError:
-        print("Error: 'data' key not found in the response JSON.")
+        if not silent:
+            print("Error: 'data' key not found in the response JSON.")
         return None
 
 if __name__ == '__main__':

@@ -19,27 +19,29 @@ def fetch_and_parse_csv(url: str, encoding: str = "utf-8-sig", silent=False) -> 
         csv_file = io.StringIO(raw_text)
         reader = csv.DictReader(csv_file)
         data = list(reader)
-        print(f"Fetched and parsed {len(data)} records from {url}")
+        if not silent:
+            print(f"Fetched and parsed {len(data)} records from {url}")
         return data
     except Exception as e:
-        print("bruh")
-        print(f"Error fetching/parsing CSV from {url}: {e}")
+        if not silent:
+            print("bruh")
+            print(f"Error fetching/parsing CSV from {url}: {e}")
         return []
 
-def fetch_mtr_lines_and_stations() -> List[Dict]:
-    return fetch_and_parse_csv(MTR_LINES_AND_STATIONS_URL)
+def fetch_mtr_lines_and_stations(silent=False) -> List[Dict]:
+    return fetch_and_parse_csv(MTR_LINES_AND_STATIONS_URL, silent=silent)
 
-def fetch_mtr_lines_fares() -> List[Dict]:
-    return fetch_and_parse_csv(MTR_LINES_FARES_URL)
+def fetch_mtr_lines_fares(silent=False) -> List[Dict]:
+    return fetch_and_parse_csv(MTR_LINES_FARES_URL, silent=silent)
 
-def fetch_light_rail_routes_and_stops() -> List[Dict]:
-    return fetch_and_parse_csv(LIGHT_RAIL_ROUTES_AND_STOPS_URL)
+def fetch_light_rail_routes_and_stops(silent=False) -> List[Dict]:
+    return fetch_and_parse_csv(LIGHT_RAIL_ROUTES_AND_STOPS_URL, silent=silent)
 
-def fetch_light_rail_fares() -> List[Dict]:
-    return fetch_and_parse_csv(LIGHT_RAIL_FARES_URL)
+def fetch_light_rail_fares(silent=False) -> List[Dict]:
+    return fetch_and_parse_csv(LIGHT_RAIL_FARES_URL, silent=silent)
 
-def fetch_airport_express_fares() -> List[Dict]:
-    return fetch_and_parse_csv(AIRPORT_EXPRESS_FARES_URL)
+def fetch_airport_express_fares(silent=False) -> List[Dict]:
+    return fetch_and_parse_csv(AIRPORT_EXPRESS_FARES_URL, silent=silent)
 
 
 if __name__ == "__main__":

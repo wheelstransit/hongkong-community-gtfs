@@ -6,24 +6,29 @@ from tqdm import tqdm
 
 BASE_URL = "https://rt.data.gov.hk/v2/transport/nlb/"
 
-def fetch_all_routes():
+def fetch_all_routes(silent=False):
     endpoint = f"{BASE_URL}route.php?action=list"
-    print("Fetching all NLB routes...")
+    if not silent:
+        print("Fetching all NLB routes...")
 
     try:
         response = requests.get(endpoint, timeout=30)
         response.raise_for_status()
         data = response.json().get('routes')
         if data is not None:
-            print(f"Successfully fetched {len(data)} routes.")
+            if not silent:
+                print(f"Successfully fetched {len(data)} routes.")
         else:
-            print("Warning: 'routes' key not found in the response, but request was successful.")
+            if not silent:
+                print("Warning: 'routes' key not found in the response, but request was successful.")
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching NLB routes: {e}")
+        if not silent:
+            print(f"Error fetching NLB routes: {e}")
         return None
     except json.JSONDecodeError:
-        print("Error: Failed to decode JSON from response.")
+        if not silent:
+            print("Error: Failed to decode JSON from response.")
         return None
 
 def fetch_stops_for_route(route):
@@ -45,7 +50,8 @@ def fetch_all_stops_and_route_stops_threaded(routes, max_workers=20, silent=Fals
         print(f"\nFetching all NLB stops and route-stop sequences with up to {max_workers} threads...")
     
     if not routes:
-        print("Could not fetch routes, aborting stop fetching.")
+        if not silent:
+            print("Could not fetch routes, aborting stop fetching.")
         return None, None
 
 
@@ -56,7 +62,7 @@ def fetch_all_stops_and_route_stops_threaded(routes, max_workers=20, silent=Fals
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         results_iterator = executor.map(fetch_stops_for_route, tasks)
         
-        progress_bar = tqdm(results_iterator, total=len(tasks), desc="Processing routes")
+        progress_bar = tqdm(results_iterator, total=len(tasks), desc="Processing routes", disable=silent)
 
         for route, stops_for_route in progress_bar:
             if not stops_for_route:
@@ -78,10 +84,12 @@ def fetch_all_stops_and_route_stops_threaded(routes, max_workers=20, silent=Fals
                 })
     
     unique_stops_list = list(all_stops_dict.values())
-    print(f"\nSuccessfully fetched {len(unique_stops_list)} unique stops.")
-    print(f"Successfully fetched {len(all_route_stops)} route-stop records.")
+    if not silent:
+        print(f"\nSuccessfully fetched {len(unique_stops_list)} unique stops.")
+        print(f"Successfully fetched {len(all_route_stops)} route-stop records.")
     
     return unique_stops_list, all_route_stops
+
 
 
 if __name__ == '__main__':

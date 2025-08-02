@@ -7,7 +7,8 @@ def unify_stops_by_name_and_distance(stops_gdf: gpd.GeoDataFrame, name_col: str,
     """
     Unifies stops within a single GeoDataFrame that have the same name and are within a specified distance.
     """
-    print(f"Unifying stops within a distance of {distance_threshold_meters}m...")
+    if not silent:
+        print(f"Unifying stops within a distance of {distance_threshold_meters}m...")
 
     projected_gdf = stops_gdf.copy().to_crs(epsg=2326)
     
@@ -44,6 +45,7 @@ def unify_stops_by_name_and_distance(stops_gdf: gpd.GeoDataFrame, name_col: str,
     duplicate_indices = stops_gdf[stops_gdf[stop_id_col].isin(duplicates_map.keys())].index
     unified_stops_gdf = stops_gdf.drop(index=duplicate_indices)
     
-    print(f"Unified {len(stops_gdf)} stops into {len(unified_stops_gdf)} unique locations.")
+    if not silent:
+        print(f"Unified {len(stops_gdf)} stops into {len(unified_stops_gdf)} unique locations.")
     
     return unified_stops_gdf, duplicates_map

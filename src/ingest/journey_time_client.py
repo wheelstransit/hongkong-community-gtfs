@@ -5,25 +5,28 @@ from tqdm import tqdm
 
 BASE_URL = "https://raw.githubusercontent.com/HK-Bus-ETA/hk-bus-time-between-stops/pages"
 
-def fetch_all_journey_time_data():
+def fetch_all_journey_time_data(silent=False):
     endpoint = f"{BASE_URL}/times/all.json"
-    print("Fetching all journey time data...")
+    if not silent:
+        print("Fetching all journey time data...")
 
     try:
         response = requests.get(endpoint, timeout=30)
         response.raise_for_status()
         data = response.json()
-        if data is not None:
+        if data is not None and not silent:
             print("Successfully fetched all journey time data.")
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching journey time data: {e}")
+        if not silent:
+            print(f"Error fetching journey time data: {e}")
         return None
     except ValueError:
-        print("Error: Invalid JSON response.")
+        if not silent:
+            print("Error: Invalid JSON response.")
         return None
 
-def fetch_hourly_journey_time_data(weekday, hour):
+def fetch_hourly_journey_time_data(weekday, hour, silent=False):
     hour_str = f"{hour:02d}"
     endpoint = f"{BASE_URL}/times_hourly/{weekday}/{hour_str}/all.json"
 
@@ -33,15 +36,17 @@ def fetch_hourly_journey_time_data(weekday, hour):
         data = response.json()
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching journey time data for weekday {weekday}, hour {hour_str}: {e}")
+        if not silent:
+            print(f"Error fetching journey time data for weekday {weekday}, hour {hour_str}: {e}")
         return None
     except ValueError:
-        print("Error: Invalid JSON response.")
+        if not silent:
+            print("Error: Invalid JSON response.")
         return None
 
 def worker_fetch_hourly_journey_time_data(task):
-    weekday, hour = task
-    return weekday, hour, fetch_hourly_journey_time_data(weekday, hour)
+    weekday, hour, silent = task
+    return weekday, hour, fetch_hourly_journey_time_data(weekday, hour, silent=silent)
 
 def fetch_all_hourly_journey_time_data_threaded(max_workers=20, silent=False):
     if not silent:
@@ -51,7 +56,7 @@ def fetch_all_hourly_journey_time_data_threaded(max_workers=20, silent=False):
     tasks = []
     for weekday in range(7):
         for hour in range(24):
-            tasks.append((weekday, hour))
+            tasks.append((weekday, hour, silent))
 
     all_data = {}
 
@@ -62,7 +67,7 @@ def fetch_all_hourly_journey_time_data_threaded(max_workers=20, silent=False):
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         results_iterator = executor.map(worker_fetch_hourly_journey_time_data, tasks)
 
-        results_iterator = tqdm(results_iterator, total=len(tasks), desc="Fetching hourly journey time data")
+        results_iterator = tqdm(results_iterator, total=len(tasks), desc="Fetching hourly journey time data", disable=silent)
 
         for weekday, hour, data in results_iterator:
             if data is not None:
@@ -70,23 +75,26 @@ def fetch_all_hourly_journey_time_data_threaded(max_workers=20, silent=False):
 
     # Count successful fetches
     total_successful = sum(len(weekday_data) for weekday_data in all_data.values())
-    print(f"\nSuccessfully fetched data for {total_successful} out of {len(tasks)} weekday-hour combinations.")
+    if not silent:
+        print(f"\nSuccessfully fetched data for {total_successful} out of {len(tasks)} weekday-hour combinations.")
     return all_data
 
-def fetch_all_hourly_journey_time_data():
+def fetch_all_hourly_journey_time_data(silent=False):
     all_data = {}
-    print("Fetching all hourly journey time data...")
+    if not silent:
+        print("Fetching all hourly journey time data...")
 
     for weekday in range(7):
         weekday_data = {}
         for hour in range(24):
-            data = fetch_hourly_journey_time_data(weekday, hour)
+            data = fetch_hourly_journey_time_data(weekday, hour, silent=silent)
             if data is not None:
                 weekday_data[hour] = data
         all_data[weekday] = weekday_data
-
-    print("Finished fetching all hourly journey time data.")
+    if not silent:
+        print("Finished fetching all hourly journey time data.")
     return all_data
+
 
 
 if __name__ == '__main__':

@@ -8,9 +8,10 @@ import random
 class GMBClient:
     BASE_URL = "https://data.etagmb.gov.hk"
 
-    def __init__(self, timeout=30):
+    def __init__(self, timeout=30, silent=False):
         self.session = requests.Session()
         self.timeout = timeout
+        self.silent = silent
 
     def _make_request(self, endpoint, max_retries=35):
         """Makes a request with exponential backoff for retries."""
@@ -23,28 +24,34 @@ class GMBClient:
                 if response.status_code == 200:
                     return response.json().get('data')
                 elif response.status_code == 404:
-                    print(f"HTTP 404 Not Found for {url}. The resource does not exist.")
+                    if not self.silent:
+                        print(f"HTTP 404 Not Found for {url}. The resource does not exist.")
                     return None
                 else:
-                    print(f"HTTP {response.status_code} error for {url}. Attempt {attempt + 1}/{max_retries}")
+                    if not self.silent:
+                        print(f"HTTP {response.status_code} error for {url}. Attempt {attempt + 1}/{max_retries}")
                     if attempt < max_retries - 1:
                         wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
-                        print(f"Waiting {wait_time:.2f} seconds before retry...")
+                        if not self.silent:
+                            print(f"Waiting {wait_time:.2f} seconds before retry...")
                         time.sleep(wait_time)
                     continue
 
             except requests.exceptions.RequestException as e:
-                print(f"Request exception for {url}: {e}. Attempt {attempt + 1}/{max_retries}")
+                if not self.silent:
+                    print(f"Request exception for {url}: {e}. Attempt {attempt + 1}/{max_retries}")
                 if attempt < max_retries - 1:
                     wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
-                    print(f"Waiting {wait_time:.2f} seconds before retry...")
+                    if not self.silent:
+                        print(f"Waiting {wait_time:.2f} seconds before retry...")
                     time.sleep(wait_time)
                 continue
             except (json.JSONDecodeError, KeyError):
-                print(f"Error: Could not parse JSON or 'data' key not found in response from {url}.")
+                if not self.silent:
+                    print(f"Error: Could not parse JSON or 'data' key not found in response from {url}.")
                 return None
-
-        print(f"Failed to get successful response from {url} after {max_retries} attempts")
+        if not self.silent:
+            print(f"Failed to get successful response from {url} after {max_retries} attempts")
         return None
 
     def get_all_routes(self, region=None):
@@ -99,10 +106,11 @@ class GMBClient:
 
         return self._make_request(endpoint)
 
-    def get_all_stops_and_route_stops(self, max_workers=10):
+    def get_all_stops_and_route_stops(self, max_workers=10, silent=False):
         all_routes_by_region = self.get_all_routes()
         if not all_routes_by_region:
-            print("Could not fetch initial route list. Aborting.")
+            if not silent:
+                print("Could not fetch initial route list. Aborting.")
             return [], []
 
         all_route_stops = []
@@ -113,7 +121,7 @@ class GMBClient:
             for route_code in route_codes:
                 tasks.append({'region': region, 'route_code': route_code})
 
-        for task in tqdm(tasks, desc="Processing routes"):
+        for task in tqdm(tasks, desc="Processing routes", disable=silent):
             region = task['region']
             route_code = task['route_code']
             route_details = self.get_route_details(region=region, route_code=route_code)
@@ -166,9 +174,10 @@ class GMBClient:
                 stop_details = future.result()
                 if stop_details:
                     all_stops_details.append(stop_details)
-
-        print(f"\nSuccessfully fetched details for {len(all_stops_details)} unique stops.")
+        if not silent:
+            print(f"\nSuccessfully fetched details for {len(all_stops_details)} unique stops.")
         return all_stops_details, all_route_stops
+
 
 
 if __name__ == '__main__':

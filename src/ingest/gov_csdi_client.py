@@ -20,17 +20,21 @@ def fetch_bus_routes_data(silent=False):
     try:
         zip_path = os.path.join(TEMP_DIR, "fgdb.zip")
 
-        print(f"Downloading data from {FGDB_URL}...")
+        if not silent:
+            print(f"Downloading data from {FGDB_URL}...")
         with requests.get(FGDB_URL, stream=True) as r:
             r.raise_for_status()
             with open(zip_path, 'wb') as f:
                 shutil.copyfileobj(r.raw, f)
-        print("Download complete.")
+        if not silent:
+            print("Download complete.")
 
-        print(f"Extracting {zip_path}...")
+        if not silent:
+            print(f"Extracting {zip_path}...")
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(TEMP_DIR)
-        print("Extraction complete.")
+        if not silent:
+            print("Extraction complete.")
 
         gdb_path = None
         for item in os.listdir(TEMP_DIR):
@@ -41,9 +45,11 @@ def fetch_bus_routes_data(silent=False):
         if not gdb_path:
             raise FileNotFoundError("Could not find .gdb directory in the extracted files.")
 
-        print(f"Reading layer '{LAYER_NAME}' from {gdb_path}...")
+        if not silent:
+            print(f"Reading layer '{LAYER_NAME}' from {gdb_path}...")
         gdf = gpd.read_file(gdb_path, layer=LAYER_NAME)
-        print(f"Successfully fetched {len(gdf)} bus route records.")
+        if not silent:
+            print(f"Successfully fetched {len(gdf)} bus route records.")
 
         geometry_col_name = gdf.geometry.name
         gdf[geometry_col_name] = gdf[geometry_col_name].apply(lambda geom: geom.wkt)
@@ -52,12 +58,14 @@ def fetch_bus_routes_data(silent=False):
         return df.to_dict('records')
 
     except Exception as e:
-        print(f"Error fetching bus routes data: {e}")
+        if not silent:
+            print(f"Error fetching bus routes data: {e}")
         return None
     finally:
         # 4. Clean up
         if os.path.exists(TEMP_DIR):
-            print(f"Cleaning up temporary directory: {TEMP_DIR}")
+            if not silent:
+                print(f"Cleaning up temporary directory: {TEMP_DIR}")
             shutil.rmtree(TEMP_DIR)
 
 if __name__ == '__main__':

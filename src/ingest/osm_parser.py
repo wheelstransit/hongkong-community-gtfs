@@ -33,15 +33,18 @@ def fetch_osm_routes(silent=False):
     try:
         response = requests.post(OVERPASS_URL, data={"data": query}, timeout=300)
         response.raise_for_status()
-        print("Successfully fetched data from Overpass API.")
+        if not silent:
+            print("Successfully fetched data from Overpass API.")
         return response.json()
 
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from Overpass API: {e}")
+        if not silent:
+            print(f"Error fetching data from Overpass API: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"Error decoding JSON response: {e}")
-        print(f"Response text: {response.text}")
+        if not silent:
+            print(f"Error decoding JSON response: {e}")
+            print(f"Response text: {response.text}")
         return None
 
 if __name__ == '__main__':

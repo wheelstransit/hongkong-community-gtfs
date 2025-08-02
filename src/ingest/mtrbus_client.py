@@ -7,8 +7,9 @@ ROUTES_URL = "https://opendata.mtr.com.hk/data/mtr_bus_routes.csv"
 STOPS_URL = "https://opendata.mtr.com.hk/data/mtr_bus_stops.csv"
 FARES_URL = "https://opendata.mtr.com.hk/data/mtr_bus_fares.csv"
 
-def fetch_and_parse_csv(url, data_name="data"):
-    print(f"Fetching MTR Bus {data_name} from {url}...")
+def fetch_and_parse_csv(url, data_name="data", silent=False):
+    if not silent:
+        print(f"Fetching MTR Bus {data_name} from {url}...")
     try:
         response = requests.get(url, timeout=30)
         response.raise_for_status()
@@ -23,36 +24,39 @@ def fetch_and_parse_csv(url, data_name="data"):
 
         reader = csv.DictReader(csv_file)
         data = list(reader)
-
-        print(f"Successfully fetched and parsed {len(data)} records for {data_name}.")
+        if not silent:
+            print(f"Successfully fetched and parsed {len(data)} records for {data_name}.")
         return data
 
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching MTR {data_name}: {e}")
+        if not silent:
+            print(f"Error fetching MTR {data_name}: {e}")
         return None
     except Exception as e:
-        print(f"An error occurred while parsing the {data_name} CSV: {e}")
+        if not silent:
+            print(f"An error occurred while parsing the {data_name} CSV: {e}")
         return None
 
 
-def fetch_all_routes():
-    return fetch_and_parse_csv(ROUTES_URL, "routes")
+def fetch_all_routes(silent=False):
+    return fetch_and_parse_csv(ROUTES_URL, "routes", silent=silent)
 
 
-def fetch_all_fares():
-    return fetch_and_parse_csv(FARES_URL, "fares")
+def fetch_all_fares(silent=False):
+    return fetch_and_parse_csv(FARES_URL, "fares", silent=silent)
 
 
-def fetch_all_route_stops():
-    return fetch_and_parse_csv(STOPS_URL, "route-stops")
+def fetch_all_route_stops(silent=False):
+    return fetch_and_parse_csv(STOPS_URL, "route-stops", silent=silent)
 
 
 def fetch_all_stops(silent=False):
     if not silent:
         print("\nProcessing raw data to generate a list of unique stops...")
-    route_stops_data = fetch_all_route_stops()
+    route_stops_data = fetch_all_route_stops(silent=silent)
     if not route_stops_data:
-        print("Could not fetch route-stop data, cannot generate unique stops list.")
+        if not silent:
+            print("Could not fetch route-stop data, cannot generate unique stops list.")
         return None
 
     unique_stops = {}
@@ -68,8 +72,10 @@ def fetch_all_stops(silent=False):
             }
 
     unique_stops_list = list(unique_stops.values())
-    print(f"Successfully identified {len(unique_stops_list)} unique stops.")
+    if not silent:
+        print(f"Successfully identified {len(unique_stops_list)} unique stops.")
     return unique_stops_list
+
 
 
 if __name__ == '__main__':

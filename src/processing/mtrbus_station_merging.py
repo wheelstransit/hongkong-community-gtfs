@@ -10,7 +10,8 @@ def unify_mtrbus_stops(
     lon_key: str = "long",
     name_key: str = "name_en",
     precision: int = 7,
-    distance_threshold_m: float = 5.0
+    distance_threshold_m: float = 5.0,
+    silent: bool = False
 ) -> Tuple[List[dict], Dict[str, str], Dict[str, List[str]]]:
     #Unify MTR Bus stops that have identical coordinates, or have the same name and are within 5 meters.
 
