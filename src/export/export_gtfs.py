@@ -180,13 +180,24 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     if not silent:
         print("Processing Citybus routes, trips, and stop_times...")
     ctb_routes_df = pd.read_sql("SELECT * FROM citybus_routes", engine)
-    ctb_routes_df['route_id'] = 'CTB-' + ctb_routes_df['unique_route_id']
+    ctb_routes_df['route_id'] = 'CTB-' + ctb_routes_df['route']
     ctb_routes_df['agency_id'] = 'CTB'
     ctb_routes_df['route_short_name'] = ctb_routes_df['route']
     ctb_routes_df['route_long_name'] = ctb_routes_df['orig_en'] + ' - ' + ctb_routes_df['dest_en']
     ctb_routes_df['route_type'] = 3
     ctb_routes_df['dir'] = ctb_routes_df['unique_route_id'].str.split('-').str[-1]
-    final_ctb_routes = ctb_routes_df[['route_id', 'agency_id', 'route_short_name', 'route_long_name', 'route_type']].drop_duplicates(subset=['route_id']).copy()
+    final_ctb_routes_list = []
+    for route_num, group in ctb_routes_df.groupby('route'):
+        first_outbound = group[group['dir'] == 'outbound'].iloc[0] if not group[group['dir'] == 'outbound'].empty else group.iloc[0]
+        first_inbound = group[group['dir'] == 'inbound'].iloc[0] if not group[group['dir'] == 'inbound'].empty else group.iloc[0]
+        final_ctb_routes_list.append({
+            'route_id': f"CTB-{route_num}",
+            'agency_id': 'CTB',
+            'route_short_name': route_num,
+            'route_long_name': f"{first_outbound['orig_en']} - {first_inbound['orig_en']}",
+            'route_type': 3
+        })
+    final_ctb_routes = pd.DataFrame(final_ctb_routes_list)
 
     ctb_trips_list = []
     for _, route in ctb_routes_df.iterrows():
@@ -212,7 +223,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             matching_gov_services = ["DEFAULT"]
         for service_id in matching_gov_services:
             ctb_trips_list.append({
-                'route_id': route['route_id'],
+                'route_id': f"CTB-{route_short_name}",
                 'service_id': f"CTB-{route_short_name}-{service_id}",
                 'trip_id': f"CTB-{route['unique_route_id']}-{service_id}",
                 'direction_id': direction_id,
@@ -281,7 +292,12 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     if not silent:
         print("Processing MTR Bus routes, trips, and stop_times...")
     mtrbus_routes_df = pd.read_sql("SELECT * FROM mtrbus_routes", engine)
-    final_mtrbus_routes = mtrbus_routes_df.drop_duplicates(subset=['route_id'])
+    mtrbus_routes_df['agency_id'] = 'MTRB'
+    mtrbus_routes_df['route_type'] = 3
+    mtrbus_routes_df['route_long_name'] = mtrbus_routes_df['route_name_eng']
+    mtrbus_routes_df['route_short_name'] = mtrbus_routes_df['route_id']
+    mtrbus_routes_df['route_id'] = 'MTRB-' + mtrbus_routes_df['route_id']
+    final_mtrbus_routes = mtrbus_routes_df[['route_id', 'agency_id', 'route_short_name', 'route_long_name', 'route_type']].drop_duplicates(subset=['route_id']).copy()
     mtrbus_trips_source = pd.read_sql("SELECT DISTINCT route_id, direction FROM mtrbus_stop_sequences", engine)
 
     mtrbus_trips_list = []
