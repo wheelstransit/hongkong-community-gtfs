@@ -19,7 +19,10 @@ from src.export.export_gtfs import export_unified_feed
 
 CACHE_DIR = ".cache"
 
-def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, *args, **kwargs):
+def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, *args, **kwargs):
+    if force_ingest_osm and 'osm' in cache_key:
+        force_ingest = True
+
     cache_file = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
 
     if not force_ingest and os.path.exists(cache_file):
@@ -37,6 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hong Kong Community GTFS Data Pipeline")
     parser.add_argument('--force-ingest', action='store_true', help='Force re-ingestion of data, ignoring cache.')
     parser.add_argument('--silent', action='store_true', help='Run in silent mode, suppressing progress bars.')
+    parser.add_argument('--force-ingest-osm', action='store_true', help='Force re-ingestion of OSM data, ignoring cache.')
     args = parser.parse_args()
 
     if not os.path.exists(CACHE_DIR):
@@ -85,6 +89,7 @@ def main():
     raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest, silent=args.silent)
     raw_light_rail_fares = fetch_or_load_from_cache("light_rail_fares", mtr_rails_client.fetch_light_rail_fares, args.force_ingest, silent=args.silent)
     raw_airport_express_fares = fetch_or_load_from_cache("airport_express_fares", mtr_rails_client.fetch_airport_express_fares, args.force_ingest, silent=args.silent)
+    raw_mtr_headway = fetch_or_load_from_cache("mtr_headway", mtr_headway.scrape_train_frequency, args.force_ingest, silent=args.silent)
     if not args.silent:
         print(f"MTR Rail data - Lines/Stations: {len(raw_mtr_lines_and_stations) if raw_mtr_lines_and_stations else 0}, Fares: {len(raw_mtr_lines_fares) if raw_mtr_lines_fares else 0}")
         print(f"Light Rail data - Routes/Stops: {len(raw_light_rail_routes_and_stops) if raw_light_rail_routes_and_stops else 0}, Fares: {len(raw_light_rail_fares) if raw_light_rail_fares else 0}")
@@ -210,6 +215,8 @@ def main():
         engine=engine,
         output_dir=os.path.join("output", "gtfs"),
         journey_time_data=raw_journey_time_data,
+        mtr_headway_data=raw_mtr_headway,
+        osm_subway_entrances_data=raw_osm_subway_entrances,
         silent=args.silent
     )
 

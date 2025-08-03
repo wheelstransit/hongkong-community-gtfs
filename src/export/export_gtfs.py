@@ -7,7 +7,7 @@ from src.processing.stop_unification import unify_stops_by_name_and_distance
 from src.processing.stop_times import generate_stop_times_for_agency_optimized as generate_stop_times_for_agency
 from src.processing.utils import get_direction
 
-def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict, silent: bool = False):
+def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict, mtr_headway_data: dict, osm_subway_entrances_data: dict, silent: bool = False):
     if not silent:
         print("--- Starting Unified GTFS Export Process ---")
 
@@ -85,13 +85,46 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     nlb_stops_gdf['stop_lon'] = nlb_stops_gdf.geometry.x
     nlb_stops_final = nlb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
 
+    # MTR Rails
+    mtr_lines_and_stations_df = pd.read_sql("SELECT * FROM mtr_lines_and_stations", engine)
+    mtr_stops_df = mtr_lines_and_stations_df[['Station ID', 'English Name']].drop_duplicates()
+    mtr_stops_df.rename(columns={'Station ID': 'stop_id', 'English Name': 'stop_name'}, inplace=True)
+    mtr_stops_df['stop_id'] = 'MTR-' + mtr_stops_df['stop_id'].astype(str)
+    mtr_stops_df['location_type'] = 1
+    mtr_stops_df['parent_station'] = None
+
+    # MTR Entrances
+    mtr_entrances = []
+    for element in osm_subway_entrances_data.get('elements', []):
+        if element['type'] == 'node':
+            mtr_entrances.append({
+                'stop_id': f"MTR-ENTRANCE-{element['id']}",
+                'stop_name': element.get('tags', {}).get('name', 'Subway Entrance'),
+                'stop_lat': element['lat'],
+                'stop_lon': element['lon'],
+                'location_type': 2,
+                'parent_station': None # To be filled later
+            })
+    mtr_entrances_df = pd.DataFrame(mtr_entrances)
+
+    # Light Rail
+    light_rail_routes_and_stops_df = pd.read_sql("SELECT * FROM light_rail_routes_and_stops", engine)
+    lr_stops_df = light_rail_routes_and_stops_df[['Stop ID', 'English Name']].drop_duplicates()
+    lr_stops_df.rename(columns={'Stop ID': 'stop_id', 'English Name': 'stop_name'}, inplace=True)
+    lr_stops_df['stop_id'] = 'LR-' + lr_stops_df['stop_id'].astype(str)
+    lr_stops_df['location_type'] = 0
+    lr_stops_df['parent_station'] = None
+
     # Combine all agencies
     all_stops_df = pd.concat([
         kmb_stops_final,
         ctb_stops_final,
         gmb_stops_final,
         mtrbus_stops_final,
-        nlb_stops_final
+        nlb_stops_final,
+        mtr_stops_df,
+        mtr_entrances_df,
+        lr_stops_df
     ], ignore_index=True)
     all_stops_df.to_csv(os.path.join(final_output_dir, 'stops.txt'), index=False)
     if not silent:
@@ -144,7 +177,6 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         bound = route['bound']
         agency_id = 'KMB'
         matching_gov_services = gov_trips_with_route_info[
-            #yuh LWB is not included in KMB for some reason
             (gov_trips_with_route_info['agency_id'].str.contains('KMB|LWB', na=False)) &
             (gov_trips_with_route_info['route_short_name'] == route_short_name) &
             (gov_trips_with_route_info['direction_id'] == direction_id)
@@ -206,7 +238,6 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         direction_id = 1 if route['dir'] == 'inbound' else 0
         agency_id = 'CTB'
         matching_gov_services = gov_trips_with_route_info[
-            #idk try try
             (gov_trips_with_route_info['agency_id'].str.contains('CTB|NWFB', na=False)) &
             (gov_trips_with_route_info['route_short_name'] == route_short_name) &
             (gov_trips_with_route_info['direction_id'] == direction_id)
@@ -425,6 +456,76 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     nlb_stoptimes_df['stop_id'] = nlb_stoptimes_df['stop_id'].replace(nlb_duplicates_map)
     nlb_stoptimes_df = nlb_stoptimes_df.merge(nlb_routes_df[['routeId', 'routeNo', 'direction_id', 'routeName_e']], on='routeId')
 
+    # -- MTR Rail --
+    if not silent:
+        print("Processing MTR Rail routes, trips, and stop_times...")
+    mtr_lines_and_stations_df = pd.read_sql("SELECT * FROM mtr_lines_and_stations", engine)
+    mtr_routes_df = mtr_lines_and_stations_df[['Line Code', 'English Name']].drop_duplicates(subset=['Line Code'])
+    mtr_routes_df.rename(columns={'Line Code': 'route_id', 'English Name': 'route_long_name'}, inplace=True)
+    mtr_routes_df['route_id'] = 'MTR-' + mtr_routes_df['route_id']
+    mtr_routes_df['agency_id'] = 'MTRR'
+    mtr_routes_df['route_short_name'] = mtr_routes_df['route_id'].str.replace('MTR-', '')
+    mtr_routes_df['route_type'] = 1 # Subway
+
+    mtr_trips_list = []
+    for _, route in mtr_routes_df.iterrows():
+        mtr_trips_list.append({
+            'route_id': route['route_id'],
+            'service_id': f"{route['route_id']}-SERVICE",
+            'trip_id': f"{route['route_id']}-TRIP",
+            'direction_id': 0
+        })
+        mtr_trips_list.append({
+            'route_id': route['route_id'],
+            'service_id': f"{route['route_id']}-SERVICE",
+            'trip_id': f"{route['route_id']}-TRIP-2",
+            'direction_id': 1
+        })
+    mtr_trips_df = pd.DataFrame(mtr_trips_list)
+
+    mtr_stoptimes_df = mtr_lines_and_stations_df.copy()
+    mtr_stoptimes_df['trip_id'] = 'MTR-' + mtr_stoptimes_df['Line Code'] + '-TRIP'
+    mtr_stoptimes_df.loc[mtr_stoptimes_df['Direction'] == 'D', 'trip_id'] = 'MTR-' + mtr_stoptimes_df['Line Code'] + '-TRIP-2'
+    mtr_stoptimes_df['stop_id'] = 'MTR-' + mtr_stoptimes_df['Station ID'].astype(str)
+    mtr_stoptimes_df.rename(columns={'Sequence': 'stop_sequence'}, inplace=True)
+    mtr_stoptimes_df['arrival_time'] = None
+    mtr_stoptimes_df['departure_time'] = None
+
+    # -- Light Rail --
+    if not silent:
+        print("Processing Light Rail routes, trips, and stop_times...")
+    light_rail_routes_and_stops_df = pd.read_sql("SELECT * FROM light_rail_routes_and_stops", engine)
+    lr_routes_df = light_rail_routes_and_stops_df[['Line Code', 'English Name']].drop_duplicates(subset=['Line Code'])
+    lr_routes_df.rename(columns={'Line Code': 'route_id', 'English Name': 'route_long_name'}, inplace=True)
+    lr_routes_df['route_id'] = 'LR-' + lr_routes_df['route_id']
+    lr_routes_df['agency_id'] = 'LR'
+    lr_routes_df['route_short_name'] = lr_routes_df['route_id'].str.replace('LR-', '')
+    lr_routes_df['route_type'] = 0 # Tram
+
+    lr_trips_list = []
+    for _, route in lr_routes_df.iterrows():
+        lr_trips_list.append({
+            'route_id': route['route_id'],
+            'service_id': f"{route['route_id']}-SERVICE",
+            'trip_id': f"{route['route_id']}-TRIP",
+            'direction_id': 0
+        })
+        lr_trips_list.append({
+            'route_id': route['route_id'],
+            'service_id': f"{route['route_id']}-SERVICE",
+            'trip_id': f"{route['route_id']}-TRIP-2",
+            'direction_id': 1
+        })
+    lr_trips_df = pd.DataFrame(lr_trips_list)
+
+    lr_stoptimes_df = light_rail_routes_and_stops_df.copy()
+    lr_stoptimes_df['trip_id'] = 'LR-' + lr_stoptimes_df['Line Code'] + '-TRIP'
+    lr_stoptimes_df.loc[lr_stoptimes_df['Direction'] == '2', 'trip_id'] = 'LR-' + lr_stoptimes_df['Line Code'] + '-TRIP-2'
+    lr_stoptimes_df['stop_id'] = 'LR-' + lr_stoptimes_df['Stop ID'].astype(str)
+    lr_stoptimes_df.rename(columns={'Sequence': 'stop_sequence'}, inplace=True)
+    lr_stoptimes_df['arrival_time'] = None
+    lr_stoptimes_df['departure_time'] = None
+
     # -- Frequency Processing --
     # Standardize merge keys to string to prevent type errors
     kmb_trips_df['original_service_id'] = kmb_trips_df['original_service_id'].astype(str)
@@ -493,8 +594,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     # -- Combine & Standardize--
     if not silent:
         print("Combining and standardizing data for final GTFS files...")
-    final_routes_df = pd.concat([final_kmb_routes, final_ctb_routes, final_gmb_routes, final_mtrbus_routes, final_nlb_routes], ignore_index=True)
-    all_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df], ignore_index=True)
+    final_routes_df = pd.concat([final_kmb_routes, final_ctb_routes, final_gmb_routes, final_mtrbus_routes, final_nlb_routes, mtr_routes_df, lr_routes_df], ignore_index=True)
+    all_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df, mtr_trips_df, lr_trips_df], ignore_index=True)
 
     # Create a mapping from the original government trip_id to our new trip_id
     trip_id_mapping = all_trips_df.merge(
@@ -517,7 +618,9 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_gmb_stoptimes = gmb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
     final_mtrbus_stoptimes = mtrbus_stoptimes_df.rename(columns={'station_seqno': 'stop_sequence'})
     final_nlb_stoptimes = nlb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
-    final_stop_times_df = pd.concat([final_kmb_stoptimes, final_ctb_stoptimes, final_gmb_stoptimes, final_mtrbus_stoptimes, final_nlb_stoptimes], ignore_index=True)
+    final_mtr_stoptimes = mtr_stoptimes_df
+    final_lr_stoptimes = lr_stoptimes_df
+    final_stop_times_df = pd.concat([final_kmb_stoptimes, final_ctb_stoptimes, final_gmb_stoptimes, final_mtrbus_stoptimes, final_nlb_stoptimes, final_mtr_stoptimes, final_lr_stoptimes], ignore_index=True)
 
     final_routes_df.to_csv(os.path.join(final_output_dir, 'routes.txt'), index=False)
     final_trips_df.to_csv(os.path.join(final_output_dir, 'trips.txt'), index=False)
