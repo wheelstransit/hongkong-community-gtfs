@@ -18,6 +18,7 @@ def generate_stop_times_for_agency_optimized(
     gov_trips_df: pd.DataFrame,
     gov_frequencies_df: pd.DataFrame,
     journey_time_data: dict,
+    unified_to_original_map: dict,
     silent: bool = False
 ):
     if not silent:
@@ -52,7 +53,8 @@ def generate_stop_times_for_agency_optimized(
     elif agency_id == 'MTRB':
         pattern_key_cols = ['route_id', 'direction']
     elif agency_id == 'NLB':
-        pattern_key_cols = ['routeNo', 'direction_id']
+        agency_stoptimes_df['routeId'] = agency_stoptimes_df['routeId'].astype(str)
+        pattern_key_cols = ['routeId']
     else:
         pattern_key_cols = ['trip_id']
 
@@ -62,19 +64,40 @@ def generate_stop_times_for_agency_optimized(
             print(f"Warning: Could not determine pattern key for {agency_id}. Cannot generate stop times.")
          return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
 
-    grouped_stops = agency_stoptimes_df.sort_values(stop_seq_col).groupby(valid_pattern_key_cols)
+    if len(valid_pattern_key_cols) == 1:
+        grouped_stops = agency_stoptimes_df.sort_values(stop_seq_col).groupby(valid_pattern_key_cols[0])
+    else:
+        grouped_stops = agency_stoptimes_df.sort_values(stop_seq_col).groupby(valid_pattern_key_cols)
 
     for name, group in tqdm(grouped_stops, desc=f"Analyzing {agency_id} trip patterns", disable=silent):
         stops = group['stop_id'].tolist()
         sequences = group[stop_seq_col].tolist()
         journey_times_sec = [0]
         for i in range(1, len(stops)):
-            from_stop_id_unprefixed = str(stops[i-1]).split('-')[-1]
-            to_stop_id_unprefixed = str(stops[i]).split('-')[-1]
+            from_stop_id = stops[i-1]
+            to_stop_id = stops[i]
+
+            original_from_stops = unified_to_original_map.get(from_stop_id, [from_stop_id])
+            original_to_stops = unified_to_original_map.get(to_stop_id, [to_stop_id])
+
+            original_from_stops_unprefixed = [s.split('-', 1)[1] if '-' in s else s for s in original_from_stops]
+            original_to_stops_unprefixed = [s.split('-', 1)[1] if '-' in s else s for s in original_to_stops]
+            
+            found_time = None
+            for from_orig in original_from_stops_unprefixed:
+                if from_orig in journey_time_data:
+                    for to_orig in original_to_stops_unprefixed:
+                        if to_orig in journey_time_data[from_orig]:
+                            found_time = journey_time_data[from_orig][to_orig]
+                            break
+                if found_time is not None:
+                    break
+            
             try:
-                time = int(journey_time_data.get(from_stop_id_unprefixed, {}).get(to_stop_id_unprefixed, DEFAULT_JOURNEY_TIME_SECS))
+                time = int(found_time if found_time is not None else DEFAULT_JOURNEY_TIME_SECS)
             except (ValueError, TypeError):
                 time = DEFAULT_JOURNEY_TIME_SECS
+            journey_times_sec.append(time)
         
         trip_patterns[name] = {
             'stop_ids': np.array(stops),
@@ -108,23 +131,21 @@ def generate_stop_times_for_agency_optimized(
         if agency_id == 'KMB':
             pattern_lookup_key = (trip_row.route_short_name, trip_row.bound)
         elif agency_id == 'CTB':
-            direction_str = 'outbound' if trip_row.direction_id == 0 else 'inbound'
-            pattern_lookup_key = f"{trip_row.route_short_name}-{direction_str}"
+            pattern_lookup_key = trip_row.unique_route_id
         elif agency_id == 'GMB':
-            pattern_lookup_key = (trip_row.route_short_name, trip_row.direction_id + 1)
+            pattern_lookup_key = (trip_row.route_short_name, trip_row.direction_id_agency + 1)
         elif agency_id == 'MTRB':
-            direction_str = 'O' if trip_row.direction_id == 0 else 'I'
+            direction_str = 'O' if trip_row.direction_id_agency == 0 else 'I'
             pattern_lookup_key = (trip_row.route_short_name, direction_str)
         elif agency_id == 'NLB':
-            direction_id = getattr(trip_row, 'direction_id_agency', None)
-            if direction_id is None:
-                direction_id = getattr(trip_row, 'direction_id', 0)
-            pattern_lookup_key = (trip_row.route_short_name, direction_id)
+            pattern_lookup_key = str(trip_row.routeId)
         else:
             pattern_lookup_key = trip_row.trip_id_agency
 
         pattern = trip_patterns.get(pattern_lookup_key)
         if not pattern:
+            if agency_id in ['CTB', 'NLB'] and not silent:
+                print(f"Pattern not found for key: {pattern_lookup_key}")
             continue
 
         start_time_str = getattr(trip_row, 'start_time', '06:00:00')

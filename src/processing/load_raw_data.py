@@ -83,7 +83,7 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     stop_names_map = route_stops_df_for_names[['stop_id', 'stop_name_en', 'stop_name_tc', 'stop_name_sc']].drop_duplicates('stop_id').set_index('stop_id')
 
     stops_df = pd.DataFrame(raw_stops)
-    
+
     # Join the names into the main stops dataframe
     stops_df = stops_df.join(stop_names_map, on='stop_id')
 
@@ -544,7 +544,8 @@ def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_j
         # Flatten the nested structure: weekday -> hour -> from_stop_id -> to_stop_id -> travel_time_seconds
         flattened_hourly_data = []
         for weekday, weekday_data in raw_hourly_journey_time_data.items():
-            if isinstance(weekday_data, dict):
+            #if isinstance(weekday_data, dict):
+            if False:
                 for hour, hour_data in weekday_data.items():
                     if isinstance(hour_data, dict):
                         for from_stop_id, destinations in hour_data.items():

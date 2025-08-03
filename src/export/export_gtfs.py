@@ -220,6 +220,11 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                 (gov_trips_with_route_info['route_short_name'].str.startswith(route_short_name, na=False))
             ]['service_id'].unique()
         if len(matching_gov_services) == 0:
+            matching_gov_services = gov_trips_with_route_info[
+                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False))
+            ]['service_id'].unique()
+
+        if len(matching_gov_services) == 0:
             matching_gov_services = ["DEFAULT"]
         for service_id in matching_gov_services:
             ctb_trips_list.append({
@@ -228,7 +233,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                 'trip_id': f"CTB-{route['unique_route_id']}-{service_id}",
                 'direction_id': direction_id,
                 'route_short_name': route_short_name,
-                'original_service_id': service_id
+                'original_service_id': service_id,
+                'unique_route_id': route['unique_route_id']
             })
     ctb_trips_df = pd.DataFrame(ctb_trips_list)
     ctb_stoptimes_df = pd.read_sql("SELECT * FROM citybus_stop_sequences", engine)
@@ -269,6 +275,11 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             matching_gov_services = gov_trips_with_route_info[
                 (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
                 (gov_trips_with_route_info['route_short_name'].str.startswith(route_short_name, na=False))
+            ]['service_id'].unique()
+
+        if len(matching_gov_services) == 0:
+            matching_gov_services = gov_trips_with_route_info[
+                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False))
             ]['service_id'].unique()
 
         if len(matching_gov_services) == 0:
@@ -323,6 +334,11 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             ]['service_id'].unique()
 
         if len(matching_gov_services) == 0:
+            matching_gov_services = gov_trips_with_route_info[
+                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False))
+            ]['service_id'].unique()
+
+        if len(matching_gov_services) == 0:
             matching_gov_services = ["DEFAULT"]
 
         for service_id in matching_gov_services:
@@ -357,7 +373,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             'route_type': 3
         })
     final_nlb_routes = pd.DataFrame(final_nlb_routes_list)
-    nlb_routes_df['direction_id'] = nlb_routes_df['routeName_e'].apply(get_direction)
+    nlb_routes_df['direction_id'] = nlb_routes_df.apply(lambda row: get_direction(row['routeName_e'], row['orig_en']), axis=1)
 
     nlb_trips_list = []
     for _, route_info in nlb_routes_df.iterrows():
@@ -382,6 +398,11 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             ]['service_id'].unique()
 
         if len(matching_gov_services) == 0:
+            matching_gov_services = gov_trips_with_route_info[
+                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False))
+            ]['service_id'].unique()
+
+        if len(matching_gov_services) == 0:
             matching_gov_services = ["DEFAULT"]
 
         for service_id in matching_gov_services:
@@ -392,7 +413,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                 'direction_id': direction_id,
                 'route_short_name': route_short_name,
                 'original_service_id': service_id,
-                'route_long_name': route_info['routeName_e']
+                'route_long_name': route_info['routeName_e'],
+                'routeId': route_info['routeId']
             })
     nlb_trips_df = pd.DataFrame(nlb_trips_list)
     nlb_stoptimes_df = pd.read_sql("SELECT * FROM nlb_stop_sequences", engine)
@@ -414,39 +436,56 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     nlb_trips_df['original_service_id'] = nlb_trips_df['original_service_id'].astype(str)
     nlb_trips_df['route_short_name'] = nlb_trips_df['route_short_name'].astype(str)
 
+    master_duplicates_map = {
+        **kmb_duplicates_map,
+        **ctb_duplicates_map,
+        **gmb_duplicates_map,
+        **mtrbus_duplicates_map,
+        **nlb_duplicates_map
+    }
+
+    if not silent:
+        print("Creating a reverse map for unified stops to original stops...")
+    unified_to_original_map = {}
+    for original, unified in master_duplicates_map.items():
+        if unified not in unified_to_original_map:
+            unified_to_original_map[unified] = []
+        unified_to_original_map[unified].append(original)
+
+
     kmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('KMB', na=False)]
     kmb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(kmb_gov_routes_df['route_id'])]
     kmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(kmb_gov_trips_df['trip_id'])]
     kmb_stoptimes_df = generate_stop_times_for_agency(
-        'KMB', kmb_trips_df, kmb_stoptimes_df, kmb_gov_routes_df, kmb_gov_trips_df, kmb_gov_frequencies_df, journey_time_data, silent=silent
+        'KMB', kmb_trips_df, kmb_stoptimes_df, kmb_gov_routes_df, kmb_gov_trips_df, kmb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
     )
 
     ctb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('CTB', na=False)]
     ctb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(ctb_gov_routes_df['route_id'])]
     ctb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(ctb_gov_trips_df['trip_id'])]
     ctb_stoptimes_df = generate_stop_times_for_agency(
-        'CTB', ctb_trips_df, ctb_stoptimes_df, ctb_gov_routes_df, ctb_gov_trips_df, ctb_gov_frequencies_df, journey_time_data, silent=silent
+        'CTB', ctb_trips_df, ctb_stoptimes_df, ctb_gov_routes_df, ctb_gov_trips_df, ctb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
     )
 
     gmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('GMB', na=False)]
     gmb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(gmb_gov_routes_df['route_id'])]
     gmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(gmb_gov_trips_df['trip_id'])]
     gmb_stoptimes_df = generate_stop_times_for_agency(
-        'GMB', gmb_trips_df, gmb_stoptimes_df, gmb_gov_routes_df, gmb_gov_trips_df, gmb_gov_frequencies_df, journey_time_data, silent=silent
+        'GMB', gmb_trips_df, gmb_stoptimes_df, gmb_gov_routes_df, gmb_gov_trips_df, gmb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
     )
 
     mtrbus_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('LRTFeeder', na=False)]
     mtrbus_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(mtrbus_gov_routes_df['route_id'])]
     mtrbus_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(mtrbus_gov_trips_df['trip_id'])]
     mtrbus_stoptimes_df = generate_stop_times_for_agency(
-        'MTRB', mtrbus_trips_df, mtrbus_stoptimes_df, mtrbus_gov_routes_df, mtrbus_gov_trips_df, mtrbus_gov_frequencies_df, journey_time_data, silent=silent
+        'MTRB', mtrbus_trips_df, mtrbus_stoptimes_df, mtrbus_gov_routes_df, mtrbus_gov_trips_df, mtrbus_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
     )
 
     nlb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('NLB', na=False)]
     nlb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(nlb_gov_routes_df['route_id'])]
     nlb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(nlb_gov_trips_df['trip_id'])]
     nlb_stoptimes_df = generate_stop_times_for_agency(
-        'NLB', nlb_trips_df, nlb_stoptimes_df, nlb_gov_routes_df, nlb_gov_trips_df, nlb_gov_frequencies_df, journey_time_data, silent=silent
+        'NLB', nlb_trips_df, nlb_stoptimes_df, nlb_gov_routes_df, nlb_gov_trips_df, nlb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
     )
 
     # -- Combine & Standardize--
@@ -471,48 +510,43 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     # --- 4. Handle `calendar.txt` and `calendar_dates.txt` ---
     if not silent:
         print("Processing calendar and calendar_dates...")
-    service_id_map = final_trips_df[final_trips_df['original_service_id'].notna()].set_index('service_id')['original_service_id'].to_dict()
+
+    # Get the base calendar and calendar_dates data
     gov_calendar_df = pd.read_sql("SELECT * FROM gov_gtfs_calendar", engine)
+    gov_calendar_df['service_id'] = gov_calendar_df['service_id'].astype(str)
+    gov_calendar_df = gov_calendar_df.set_index('service_id')
+
     gov_calendar_dates_df = pd.read_sql("SELECT * FROM gov_gtfs_calendar_dates", engine)
-    mapped_gov_service_ids = set(service_id_map.values())
-    final_calendar_df = gov_calendar_df[gov_calendar_df['service_id'].isin(mapped_gov_service_ids)].copy()
-    final_calendar_dates_df = gov_calendar_dates_df[gov_calendar_dates_df['service_id'].isin(mapped_gov_service_ids)].copy()
+    gov_calendar_dates_df['service_id'] = gov_calendar_dates_df['service_id'].astype(str)
+    gov_calendar_dates_df = gov_calendar_dates_df.set_index('service_id')
 
-    reverse_service_id_map = {}
-    for new_id, orig_id in service_id_map.items():
-        if orig_id not in reverse_service_id_map:
-            reverse_service_id_map[orig_id] = []
-        reverse_service_id_map[orig_id].append(new_id)
+    # Create a dataframe with the mapping between new and original service IDs
+    service_id_mapping_df = final_trips_df[['service_id', 'original_service_id']].drop_duplicates()
 
-    new_calendar_rows = []
-    final_calendar_df['service_id'] = final_calendar_df['service_id'].astype(str)
-    for _, row in final_calendar_df.iterrows():
-        original_id = str(row['service_id'])
-        if original_id in reverse_service_id_map:
-            for new_id in reverse_service_id_map[original_id]:
-                new_row = row.copy()
-                new_row['service_id'] = new_id
-                new_calendar_rows.append(new_row)
+    # Merge the mapping with the calendar data
+    # This will create a new row for each new service_id that shares an original_service_id
+    final_calendar_df = service_id_mapping_df.merge(
+        gov_calendar_df,
+        left_on='original_service_id',
+        right_index=True,
+        how='inner'
+    )
+    # Now, we just need to select the columns for the final calendar.txt, using the new service_id
 
-    new_calendar_dates_rows = []
-    final_calendar_dates_df['service_id'] = final_calendar_dates_df['service_id'].astype(str)
-    for _, row in final_calendar_dates_df.iterrows():
-        original_id = str(row['service_id'])
-        if original_id in reverse_service_id_map:
-            for new_id in reverse_service_id_map[original_id]:
-                new_row = row.copy()
-                new_row['service_id'] = new_id
-                new_calendar_dates_rows.append(new_row)
+    final_calendar_df = final_calendar_df.drop(columns=['original_service_id'])
 
-    if new_calendar_rows:
-        final_calendar_df = pd.DataFrame(new_calendar_rows)
-    else:
-        final_calendar_df = pd.DataFrame(columns=gov_calendar_df.columns)
+    final_calendar_dates_df = service_id_mapping_df.merge(
+        gov_calendar_dates_df,
+        left_on='original_service_id',
+        right_index=True,
+        how='inner'
+    )
+    final_calendar_dates_df = final_calendar_dates_df.drop(columns=['original_service_id'])
 
-    if new_calendar_dates_rows:
-        final_calendar_dates_df = pd.DataFrame(new_calendar_dates_rows)
-    else:
-        final_calendar_dates_df = pd.DataFrame(columns=gov_calendar_dates_df.columns)
+    # why are there dupes??
+    final_calendar_df = final_calendar_df.drop_duplicates(subset=['service_id'])
+    final_calendar_dates_df = final_calendar_dates_df.drop_duplicates(subset=['service_id', 'date'])
+
 
     final_calendar_df.to_csv(os.path.join(final_output_dir, 'calendar.txt'), index=False)
     final_calendar_dates_df.to_csv(os.path.join(final_output_dir, 'calendar_dates.txt'), index=False)
@@ -524,6 +558,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         for filename in os.listdir(final_output_dir):
             zf.write(os.path.join(final_output_dir, filename), arcname=filename)
+
+    # i'll implament gtfs dense encoding later
 
     if not silent:
         print(f"--- Unified GTFS Build Complete. Output at {zip_path} ---")

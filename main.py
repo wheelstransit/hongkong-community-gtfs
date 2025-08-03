@@ -106,9 +106,9 @@ def main():
         print(f"NLB data - Routes: {len(raw_nlb_routes) if raw_nlb_routes else 0}, Stops: {len(raw_nlb_stops) if raw_nlb_stops else 0}, Route-stops: {len(raw_nlb_route_stops) if raw_nlb_route_stops else 0}")
 
     # CSDI
-    raw_CSDI_data = fetch_or_load_from_cache("csdi_bus_routes", gov_csdi_client.fetch_bus_routes_data, args.force_ingest, silent=args.silent)
-    if not args.silent:
-        print(f"CSDI data - Records: {len(raw_CSDI_data) if raw_CSDI_data else 0}")
+    # raw_CSDI_data = fetch_or_load_from_cache("csdi_bus_routes", gov_csdi_client.fetch_bus_routes_data, args.force_ingest, silent=args.silent)
+    # if not args.silent:
+    #     print(f"CSDI data - Records: {len(raw_CSDI_data) if raw_CSDI_data else 0}")
 
     # Journey Time
     raw_journey_time_data = fetch_or_load_from_cache("journey_time", journey_time_client.fetch_all_journey_time_data, args.force_ingest, silent=args.silent)
@@ -187,11 +187,11 @@ def main():
         silent=args.silent
     )
 
-    process_and_load_csdi_data(
-        raw_csdi_data=raw_CSDI_data,
-        engine=engine,
-        silent=args.silent
-    )
+    # process_and_load_csdi_data(
+    #     raw_csdi_data=raw_CSDI_data,
+    #     engine=engine,
+    #     silent=args.silent
+    # )
 
     process_and_load_journey_time_data(
         raw_journey_time_data=raw_journey_time_data,
