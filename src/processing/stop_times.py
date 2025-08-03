@@ -105,42 +105,23 @@ def generate_stop_times_for_agency_optimized(
             'cumulative_offsets_sec': np.cumsum(journey_times_sec)
         }
 
-    # --- Step 2: Vectorized Generation ---
-    st_trip_ids = []
-    st_arrival_times = []
-    st_departure_times = []
-    st_stop_ids = []
-    st_stop_sequences = []
+    # --- Step 2: Generate Stop Times for a single trip ---
+    all_stop_times = []
 
-    agency_trips_with_gov_info = agency_trips_df.merge(
-    gov_trips_df,
-    left_on=['route_short_name', 'original_service_id'],
-    right_on=['route_short_name', 'service_id'],
-    how='left',
-    suffixes=['_agency', '_gov']
-)
-
-    trips_with_freq = agency_trips_with_gov_info.merge(
-        gov_frequencies_df,
-        left_on='trip_id_gov',
-        right_on='trip_id',
-        how='left'
-    )
-
-    for trip_row in tqdm(trips_with_freq.itertuples(), total=trips_with_freq.shape[0], desc=f"Generating {agency_id} stop times", disable=silent):
+    for trip_row in tqdm(agency_trips_df.itertuples(), total=agency_trips_df.shape[0], desc=f"Generating {agency_id} stop times", disable=silent):
         if agency_id == 'KMB':
             pattern_lookup_key = (trip_row.route_short_name, trip_row.bound)
         elif agency_id == 'CTB':
             pattern_lookup_key = trip_row.unique_route_id
         elif agency_id == 'GMB':
-            pattern_lookup_key = (trip_row.route_short_name, trip_row.direction_id_agency + 1)
+            pattern_lookup_key = (trip_row.route_short_name, trip_row.direction_id + 1)
         elif agency_id == 'MTRB':
-            direction_str = 'O' if trip_row.direction_id_agency == 0 else 'I'
+            direction_str = 'O' if trip_row.direction_id == 0 else 'I'
             pattern_lookup_key = (trip_row.route_short_name, direction_str)
         elif agency_id == 'NLB':
             pattern_lookup_key = str(trip_row.routeId)
         else:
-            pattern_lookup_key = trip_row.trip_id_agency
+            pattern_lookup_key = trip_row.trip_id
 
         pattern = trip_patterns.get(pattern_lookup_key)
         if not pattern:
@@ -148,67 +129,28 @@ def generate_stop_times_for_agency_optimized(
                 print(f"Pattern not found for key: {pattern_lookup_key}")
             continue
 
-        start_time_str = getattr(trip_row, 'start_time', '06:00:00')
-        end_time_str = getattr(trip_row, 'end_time', '23:00:00')
-        headway_secs_val = getattr(trip_row, 'headway_secs', 1200)
+        # Generate arrival_time and departure_time as offsets from the start of the trip (00:00:00)
+        offsets = pd.to_timedelta(pattern['cumulative_offsets_sec'], unit='s')
+        
+        # Format the timedelta objects into HH:MM:SS strings
+        formatted_times = [format_timedelta(offset) for offset in offsets]
 
-        if pd.isna(start_time_str): start_time_str = '06:00:00'
-        if pd.isna(end_time_str): end_time_str = '23:00:00'
-        if pd.isna(headway_secs_val): headway_secs_val = 1200
+        for i in range(len(pattern['stop_ids'])):
+            all_stop_times.append({
+                'trip_id': trip_row.trip_id,
+                'arrival_time': formatted_times[i],
+                'departure_time': formatted_times[i],
+                'stop_id': pattern['stop_ids'][i],
+                'stop_sequence': pattern['sequences'][i]
+            })
 
-        try:
-            start_time_secs = pd.to_timedelta(start_time_str).total_seconds()
-            end_time_secs = pd.to_timedelta(end_time_str).total_seconds()
-            headway_secs = int(headway_secs_val)
-        except (ValueError, TypeError):
-            start_time_secs = pd.to_timedelta('06:00:00').total_seconds()
-            end_time_secs = pd.to_timedelta('23:00:00').total_seconds()
-            headway_secs = 1200
-
-        if headway_secs == 0: continue
-
-        all_trip_start_times_secs = np.arange(start_time_secs, end_time_secs, headway_secs)
-        if all_trip_start_times_secs.size == 0:
-            continue
-
-        arrival_times_secs = pattern['cumulative_offsets_sec'][:, np.newaxis] + all_trip_start_times_secs
-
-        num_trips_in_block = len(all_trip_start_times_secs)
-        num_stops = len(pattern['stop_ids'])
-
-        st_trip_ids.extend([trip_row.trip_id_agency] * (num_stops * num_trips_in_block))
-        st_stop_ids.extend(np.tile(pattern['stop_ids'], num_trips_in_block).tolist())
-        st_stop_sequences.extend(np.tile(pattern['sequences'], num_trips_in_block).tolist())
-
-        flat_arrival_times = arrival_times_secs.flatten(order='F').astype(int)
-        tds = pd.to_timedelta(flat_arrival_times, unit='s')
-
-        components = tds.components
-        hours = components.days * 24 + components.hours
-        minutes = components.minutes
-        seconds = components.seconds
-        formatted_times = (
-            hours.astype(str).str.zfill(2) + ':' +
-            minutes.astype(str).str.zfill(2) + ':' +
-            seconds.astype(str).str.zfill(2)
-        ).tolist()
-
-        st_arrival_times.extend(formatted_times)
-        st_departure_times.extend(formatted_times)
-
-    if not st_trip_ids:
+    if not all_stop_times:
         if not silent:
             print(f"Warning: No {agency_id} stop times were generated. Check matching logic and input data.")
         return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
 
     # --- Step 3: Create DataFrame ---
-    final_df = pd.DataFrame({
-        'trip_id': st_trip_ids,
-        'arrival_time': st_arrival_times,
-        'departure_time': st_departure_times,
-        'stop_id': st_stop_ids,
-        'stop_sequence': st_stop_sequences
-    })
+    final_df = pd.DataFrame(all_stop_times)
     
     if not silent:
         print(f"Generated {len(final_df)} stop times for {agency_id}.")

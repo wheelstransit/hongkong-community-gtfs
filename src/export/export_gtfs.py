@@ -144,7 +144,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         bound = route['bound']
         agency_id = 'KMB'
         matching_gov_services = gov_trips_with_route_info[
-            (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
+            #yuh LWB is not included in KMB for some reason
+            (gov_trips_with_route_info['agency_id'].str.contains('KMB|LWB', na=False)) &
             (gov_trips_with_route_info['route_short_name'] == route_short_name) &
             (gov_trips_with_route_info['direction_id'] == direction_id)
         ]['service_id'].unique()
@@ -205,7 +206,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         direction_id = 1 if route['dir'] == 'inbound' else 0
         agency_id = 'CTB'
         matching_gov_services = gov_trips_with_route_info[
-            (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
+            #idk try try
+            (gov_trips_with_route_info['agency_id'].str.contains('CTB|NWFB', na=False)) &
             (gov_trips_with_route_info['route_short_name'] == route_short_name) &
             (gov_trips_with_route_info['direction_id'] == direction_id)
         ]['service_id'].unique()
@@ -492,10 +494,25 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     if not silent:
         print("Combining and standardizing data for final GTFS files...")
     final_routes_df = pd.concat([final_kmb_routes, final_ctb_routes, final_gmb_routes, final_mtrbus_routes, final_nlb_routes], ignore_index=True)
-    final_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df], ignore_index=True)
+    all_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df], ignore_index=True)
+
+    # Create a mapping from the original government trip_id to our new trip_id
+    trip_id_mapping = all_trips_df.merge(
+        gov_trips_with_route_info,
+        left_on=['original_service_id', 'route_short_name', 'direction_id'],
+        right_on=['service_id', 'route_short_name', 'direction_id']
+    )[['trip_id_x', 'trip_id_y']].rename(columns={'trip_id_x': 'new_trip_id', 'trip_id_y': 'original_trip_id'})
+
+    # Update the trip_id in the frequencies dataframe
+    final_frequencies_df = gov_frequencies_df.merge(trip_id_mapping, left_on='trip_id', right_on='original_trip_id', how='left')
+    final_frequencies_df['trip_id'] = final_frequencies_df['new_trip_id'].fillna(final_frequencies_df['trip_id'])
+    final_frequencies_df = final_frequencies_df.drop(columns=['new_trip_id', 'original_trip_id'])
+
+    # For trips with frequency info, keep only one representative trip per service
+    final_trips_df = all_trips_df.drop_duplicates(subset=['service_id'])
 
     stop_times_cols = ['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence']
-    final_kmb_stoptimes = kmb_stoptimes_df.rename(columns={'seq': 'stop_sequence'})[stop_times_cols]
+    final_kmb_stoptimes = kmb_stoptimes_df.rename(columns={'seq': 'stop_sequence'})
     final_ctb_stoptimes = ctb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
     final_gmb_stoptimes = gmb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
     final_mtrbus_stoptimes = mtrbus_stoptimes_df.rename(columns={'station_seqno': 'stop_sequence'})
@@ -505,7 +522,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_routes_df.to_csv(os.path.join(final_output_dir, 'routes.txt'), index=False)
     final_trips_df.to_csv(os.path.join(final_output_dir, 'trips.txt'), index=False)
     final_stop_times_df.to_csv(os.path.join(final_output_dir, 'stop_times.txt'), index=False)
-    gov_frequencies_df.to_csv(os.path.join(final_output_dir, 'frequencies.txt'), index=False)
+    final_frequencies_df.to_csv(os.path.join(final_output_dir, 'frequencies.txt'), index=False)
 
     # --- 4. Handle `calendar.txt` and `calendar_dates.txt` ---
     if not silent:
