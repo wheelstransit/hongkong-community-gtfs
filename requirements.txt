@@ -11,3 +11,5 @@ rtree
 networkx
 scikit-learn
 geopy
+beautifulsoup4
+httpx

@@ -14,7 +14,6 @@ class GMBClient:
         self.silent = silent
 
     def _make_request(self, endpoint, max_retries=35):
-        """Makes a request with exponential backoff for retries."""
         url = f"{self.BASE_URL}{endpoint}"
 
         for attempt in range(max_retries):
@@ -54,7 +53,7 @@ class GMBClient:
             print(f"Failed to get successful response from {url} after {max_retries} attempts")
         return None
 
-    def get_all_routes(self, region=None):
+    def get_all_routes(self, region=None, silent=False):
         endpoint = "/route"
         if region:
             if region.upper() not in ['HKI', 'KLN', 'NT']:
@@ -77,7 +76,6 @@ class GMBClient:
     def get_stop_details(self, stop_id):
         data = self._make_request(f"/stop/{stop_id}")
         if data:
-            # Add stop_id to the response data for easier mapping
             data['stop_id'] = stop_id
         return data
 
@@ -161,10 +159,11 @@ class GMBClient:
                         })
 
         if not silent:
-            print(f"\nFound {len(all_route_stops)} route-stop records.")
-            print(f"Found {len(unique_stop_ids)} unique stops to fetch details for.")
+            print(f"\nfound {len(all_route_stops)} route-stop records.")
+            print(f"found {len(unique_stop_ids)} unique stops to fetch details for.")
 
-            print(f"\n--- Phase 2: Fetching details for {len(unique_stop_ids)} unique stops (multithreaded) ---")
+            # phase 2
+            print(f"\nfetching details for {len(unique_stop_ids)} unique stops (multithreaded)")
         all_stops_details = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_stop = {executor.submit(self.get_stop_details, stop_id): stop_id for stop_id in unique_stop_ids}
@@ -175,7 +174,7 @@ class GMBClient:
                 if stop_details:
                     all_stops_details.append(stop_details)
         if not silent:
-            print(f"\nSuccessfully fetched details for {len(all_stops_details)} unique stops.")
+            print(f"\nsuccessfully fetched details for {len(all_stops_details)} unique stops.")
         return all_stops_details, all_route_stops
 
 
@@ -184,14 +183,14 @@ if __name__ == '__main__':
     client = GMBClient()
     all_stops, all_route_stops = client.get_all_stops_and_route_stops(max_workers=10)
 
-    print("\n--- Summary ---")
-    print(f"Total unique stops with details: {len(all_stops)}")
-    print(f"Total route-stop records: {len(all_route_stops)}")
+    # summary
+    print(f"total unique stops with details: {len(all_stops)}")
+    print(f"total route-stop records: {len(all_route_stops)}")
 
     if all_stops:
-        print("\nSample stop data:")
+        # sample stop data
         print(json.dumps(all_stops[0], indent=2, ensure_ascii=False))
 
     if all_route_stops:
-        print("\nSample route-stop record:")
+        # sample route-stop record
         print(json.dumps(all_route_stops[0], indent=2, ensure_ascii=False))

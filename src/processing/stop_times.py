@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 
 def format_timedelta(td):
-    """Formats a timedelta object into an HH:MM:SS string."""
     total_seconds = int(td.total_seconds())
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -22,30 +21,35 @@ def generate_stop_times_for_agency_optimized(
     silent: bool = False
 ):
     if not silent:
-        print(f"Generating stop times for {agency_id}...")
+        print(f"generating stop times for {agency_id}...")
+
+    if agency_id == 'GMB':
+        print("gmb agency_trips_df:")
+        print(agency_trips_df.head())
+        print("gmb agency_stoptimes_df:")
+        print(agency_stoptimes_df.head())
 
     if agency_trips_df.empty or agency_stoptimes_df.empty:
         if not silent:
-            print(f"One of the dataframes for {agency_id} is empty. Skipping.")
+            print(f"one of the dataframes for {agency_id} is empty. skipping.")
         return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
 
-    # --- Step 1: Pre-compute Trip Patterns ---
     possible_seq_cols = ['sequence', 'seq', 'station_seqno', 'stop_sequence']
     stop_seq_col = next((col for col in possible_seq_cols if col in agency_stoptimes_df.columns), None)
     if stop_seq_col is None:
         if not silent:
-            print(f"Warning: No valid sequence column found for {agency_id}. Cannot generate stop times.")
+            print(f"warning: no valid sequence column found for {agency_id}. cannot generate stop times.")
         return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
 
     agency_stoptimes_df[stop_seq_col] = pd.to_numeric(agency_stoptimes_df[stop_seq_col], errors='coerce')
     agency_stoptimes_df.dropna(subset=[stop_seq_col], inplace=True)
     agency_stoptimes_df[stop_seq_col] = agency_stoptimes_df[stop_seq_col].astype(int)
 
-    DEFAULT_JOURNEY_TIME_SECS = 120
+    default_journey_time_secs = 120
     trip_patterns = {}
-    
+
     if agency_id == 'KMB':
-        pattern_key_cols = ['route', 'bound']
+        pattern_key_cols = ['route', 'bound', 'service_type']
     elif agency_id == 'CTB':
         pattern_key_cols = ['unique_route_id']
     elif agency_id == 'GMB':
@@ -61,7 +65,7 @@ def generate_stop_times_for_agency_optimized(
     valid_pattern_key_cols = [col for col in pattern_key_cols if col in agency_stoptimes_df.columns]
     if not valid_pattern_key_cols:
          if not silent:
-            print(f"Warning: Could not determine pattern key for {agency_id}. Cannot generate stop times.")
+            print(f"warning: could not determine pattern key for {agency_id}. cannot generate stop times.")
          return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
 
     if len(valid_pattern_key_cols) == 1:
@@ -69,7 +73,7 @@ def generate_stop_times_for_agency_optimized(
     else:
         grouped_stops = agency_stoptimes_df.sort_values(stop_seq_col).groupby(valid_pattern_key_cols)
 
-    for name, group in tqdm(grouped_stops, desc=f"Analyzing {agency_id} trip patterns", disable=silent):
+    for name, group in tqdm(grouped_stops, desc=f"analyzing {agency_id} trip patterns", disable=silent):
         stops = group['stop_id'].tolist()
         sequences = group[stop_seq_col].tolist()
         journey_times_sec = [0]
@@ -82,7 +86,7 @@ def generate_stop_times_for_agency_optimized(
 
             original_from_stops_unprefixed = [s.split('-', 1)[1] if '-' in s else s for s in original_from_stops]
             original_to_stops_unprefixed = [s.split('-', 1)[1] if '-' in s else s for s in original_to_stops]
-            
+
             found_time = None
             for from_orig in original_from_stops_unprefixed:
                 if from_orig in journey_time_data:
@@ -92,29 +96,28 @@ def generate_stop_times_for_agency_optimized(
                             break
                 if found_time is not None:
                     break
-            
+
             try:
-                time = int(found_time if found_time is not None else DEFAULT_JOURNEY_TIME_SECS)
+                time = int(found_time if found_time is not None else default_journey_time_secs)
             except (ValueError, TypeError):
-                time = DEFAULT_JOURNEY_TIME_SECS
+                time = default_journey_time_secs
             journey_times_sec.append(time)
-        
+
         trip_patterns[name] = {
             'stop_ids': np.array(stops),
             'sequences': np.array(sequences),
             'cumulative_offsets_sec': np.cumsum(journey_times_sec)
         }
 
-    # --- Step 2: Generate Stop Times for a single trip ---
     all_stop_times = []
 
-    for trip_row in tqdm(agency_trips_df.itertuples(), total=agency_trips_df.shape[0], desc=f"Generating {agency_id} stop times", disable=silent):
+    for trip_row in tqdm(agency_trips_df.itertuples(), total=agency_trips_df.shape[0], desc=f"generating {agency_id} stop times", disable=silent):
         if agency_id == 'KMB':
-            pattern_lookup_key = (trip_row.route_short_name, trip_row.bound)
+            pattern_lookup_key = (trip_row.route_short_name, trip_row.bound, trip_row.service_type)
         elif agency_id == 'CTB':
             pattern_lookup_key = trip_row.unique_route_id
         elif agency_id == 'GMB':
-            pattern_lookup_key = (trip_row.route_short_name, trip_row.direction_id + 1)
+            pattern_lookup_key = (trip_row.route_code, trip_row.route_seq)
         elif agency_id == 'MTRB':
             direction_str = 'O' if trip_row.direction_id == 0 else 'I'
             pattern_lookup_key = (trip_row.route_short_name, direction_str)
@@ -126,13 +129,10 @@ def generate_stop_times_for_agency_optimized(
         pattern = trip_patterns.get(pattern_lookup_key)
         if not pattern:
             if agency_id in ['CTB', 'NLB'] and not silent:
-                print(f"Pattern not found for key: {pattern_lookup_key}")
+                print(f"pattern not found for key: {pattern_lookup_key}")
             continue
 
-        # Generate arrival_time and departure_time as offsets from the start of the trip (00:00:00)
         offsets = pd.to_timedelta(pattern['cumulative_offsets_sec'], unit='s')
-        
-        # Format the timedelta objects into HH:MM:SS strings
         formatted_times = [format_timedelta(offset) for offset in offsets]
 
         for i in range(len(pattern['stop_ids'])):
@@ -146,13 +146,12 @@ def generate_stop_times_for_agency_optimized(
 
     if not all_stop_times:
         if not silent:
-            print(f"Warning: No {agency_id} stop times were generated. Check matching logic and input data.")
+            print(f"warning: no {agency_id} stop times were generated. check matching logic and input data.")
         return pd.DataFrame(columns=['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])
 
-    # --- Step 3: Create DataFrame ---
     final_df = pd.DataFrame(all_stop_times)
-    
+
     if not silent:
-        print(f"Generated {len(final_df)} stop times for {agency_id}.")
-        
+        print(f"generated {len(final_df)} stop times for {agency_id}.")
+
     return final_df

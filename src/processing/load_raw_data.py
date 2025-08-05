@@ -2,6 +2,7 @@ import pandas as pd
 import geopandas as gpd
 from sqlalchemy.engine import Engine
 from shapely import wkt
+import re
 
 def process_and_load_kmb_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine, silent=False):
     if not all([raw_routes, raw_stops, raw_route_stops]):
@@ -465,17 +466,26 @@ def process_and_load_mtr_rails_data(
     engine: Engine,
     silent=False
 ):
-    """
-    Process and load MTR heavy rail, Light Rail, and Airport Express data into the database.
-    """
     # --- MTR Heavy Rail ---
     if raw_mtr_lines_and_stations:
         if not silent:
             print("Processing MTR lines and stations...")
-        mtr_lines_stations_df = pd.DataFrame(raw_mtr_lines_and_stations)
-        mtr_lines_stations_df.to_sql('mtr_lines_and_stations', engine, if_exists='replace', index=False)
+
+        stations_df = pd.DataFrame(raw_mtr_lines_and_stations)
+        # Drop rows where location data could not be fetched
+        stations_df.dropna(subset=['longitude', 'latitude'], inplace=True)
+
+        # Create a GeoDataFrame to add the geometry column
+        stations_gdf = gpd.GeoDataFrame(
+            stations_df,
+            geometry=gpd.points_from_xy(stations_df.longitude, stations_df.latitude),
+            crs="EPSG:4326"
+        )
+        stations_gdf.drop(columns=['latitude', 'longitude'], inplace=True)
+
+        stations_gdf.to_postgis('mtr_lines_and_stations', engine, if_exists='replace', index=False)
         if not silent:
-            print(f"Loaded {len(mtr_lines_stations_df)} records into 'mtr_lines_and_stations' table.")
+            print(f"Loaded {len(stations_gdf)} records into 'mtr_lines_and_stations' table.")
 
     if raw_mtr_lines_fares:
         if not silent:
@@ -512,7 +522,6 @@ def process_and_load_mtr_rails_data(
             print(f"Loaded {len(ae_fares_df)} records into 'airport_express_fares' table.")
 
 def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_journey_time_data: dict, engine: Engine, silent=False):
-    """Process and load journey time data into the database."""
     if not any([raw_journey_time_data, raw_hourly_journey_time_data]):
         if not silent:
             print("Journey time raw data is empty. Aborting journey time data processing.")
@@ -565,21 +574,55 @@ def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_j
             if not silent:
                 print(f"Loaded {len(hourly_journey_time_df)} records into 'hourly_journey_time_data' table.")
 
+def process_and_load_mtr_exits_data(raw_mtr_exits_data: list, engine: Engine, silent=False):
+    """Process and load MTR exit data into the database."""
+    if not raw_mtr_exits_data:
+        if not silent:
+            print("MTR exits raw data is empty. Aborting MTR exits data processing.")
+        return
 
-def process_and_load_osm_data(raw_osm_data, engine, silent=False):
-    # This is a placeholder for the actual data processing and loading logic
     if not silent:
-        print("Processing and loading OSM data...")
-    if raw_osm_data and 'elements' in raw_osm_data and not silent:
-        print(f"  - Received {len(raw_osm_data['elements'])} OSM elements.")
-    # Here you would typically:
-    # 1. Parse the complex JSON structure from Overpass API
-    # 2. Extract relevant information (routes, stops, ways, nodes)
-    # 3. Transform it into a structured format (e.g., pandas DataFrames)
-    # 4. Relate it to your existing GTFS data model
-    # 5. Load the cleaned and structured data into the database
+        print(f"Processing MTR exits data... ({len(raw_mtr_exits_data)} records)")
+
+    exits_df = pd.DataFrame(raw_mtr_exits_data)
+
+    # Create a GeoDataFrame to store the data spatially
+    exits_gdf = gpd.GeoDataFrame(
+        exits_df,
+        geometry=gpd.points_from_xy(exits_df.lon, exits_df.lat),
+        crs="EPSG:4326"
+    )
+    exits_gdf = exits_gdf.drop(columns=['lat', 'lon'])
+
+    # Save to PostGIS
+    exits_gdf.to_postgis('mtr_exits', engine, if_exists='replace', index=False)
+
     if not silent:
-        print("  - Placeholder: OSM data processing not yet implemented.")
+        print(f"Loaded {len(exits_gdf)} records into spatial table 'mtr_exits'.")
+
+def process_and_load_light_rail_stops_data(raw_light_rail_stops: dict, engine: Engine, silent=False):
+    """Process and load Light Rail stop data into the database."""
+    if not raw_light_rail_stops:
+        if not silent:
+            print("Light Rail stops raw data is empty. Aborting.")
+        return
+
+    if not silent:
+        print(f"Processing Light Rail stops... ({len(raw_light_rail_stops)} records)")
+
+    stops_df = pd.DataFrame(raw_light_rail_stops.values())
+
+    stops_gdf = gpd.GeoDataFrame(
+        stops_df,
+        geometry=gpd.points_from_xy(stops_df.lon, stops_df.lat),
+        crs="EPSG:4326"
+    )
+    stops_gdf.drop(columns=['lat', 'lon'], inplace=True)
+
+    stops_gdf.to_postgis('light_rail_stops', engine, if_exists='replace', index=False)
+
+    if not silent:
+        print(f"Loaded {len(stops_gdf)} records into spatial table 'light_rail_stops'.")
 
 def process_and_load_tramway_data(raw_routes: list, raw_stops: list, engine: Engine, silent=False):
     """

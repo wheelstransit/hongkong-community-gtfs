@@ -51,3 +51,7 @@ This project uses datasets from the Hong Kong Special Administrative Region Gove
 *   The data is provided by various government departments and public/private organisations.
 *   We acknowledge that the intellectual property rights in the data obtained from `data.gov.hk` are owned by the Government of the HKSAR.
 *   Use of this data is subject to the "Terms and Conditions of Use" as published on [https://data.gov.hk](https://data.gov.hk).
+
+### 3. hkbus/hk-bus-crawling
+
+A quite large portion of the code was taken indirectly from `hkbus/hk-bus-crawling`.
