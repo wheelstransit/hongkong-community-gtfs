@@ -13,3 +13,6 @@ scikit-learn
 geopy
 beautifulsoup4
 httpx
+fuzzywuzzy
+python-Levenshtein
+fiona

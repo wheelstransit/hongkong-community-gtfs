@@ -207,6 +207,15 @@ def process_and_load_citybus_data(raw_routes: list, raw_stop_details: list, raw_
         left_on='route',
         right_on='route_id'
     )
+
+    # Swap origin and destination for inbound routes
+    inbound_mask = routes_df['direction'] == 'inbound'
+    orig_cols = ['orig_en', 'orig_tc', 'orig_sc']
+    dest_cols = ['dest_en', 'dest_tc', 'dest_sc']
+
+    # Use .copy() to avoid SettingWithCopyWarning
+    routes_df.loc[inbound_mask, orig_cols + dest_cols] = routes_df.loc[inbound_mask, dest_cols + orig_cols].values
+
     routes_df['unique_route_id'] = routes_df['route'] + '-' + routes_df['direction']
     routes_df.to_sql('citybus_routes', engine, if_exists='replace', index=False)
     if not silent:

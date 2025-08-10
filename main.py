@@ -6,9 +6,9 @@ import inspect
 import logging
 from src.common.database import get_db_engine
 from src.ingest import (
-    kmb_client, citybus_client, gov_gtfs_client, gov_csdi_client, gmb_client,
+    kmb_client, citybus_client, gov_gtfs_client, gmb_client,
     mtrbus_client, nlb_client, journey_time_client, mtr_rails_client,
-    mtr_headway, mtr_exit_client, light_rail_stops_fetcher
+    mtr_headway, mtr_exit_client, light_rail_stops_fetcher, osm_parser
 )
 from src.processing.load_raw_data import (
     process_and_load_kmb_data,
@@ -17,13 +17,13 @@ from src.processing.load_raw_data import (
     process_and_load_citybus_data,
     process_and_load_nlb_data,
     process_and_load_gov_gtfs_data,
-    process_and_load_csdi_data,
     process_and_load_journey_time_data,
     process_and_load_mtr_exits_data,
     process_and_load_mtr_rails_data,
     process_and_load_light_rail_stops_data
 )
 from src.export.export_gtfs import export_unified_feed
+from src.ingest.waypoints_client import fetch_csdi_waypoints_data
 
 cache_dir = ".cache"
 
@@ -53,6 +53,7 @@ def main():
     parser.add_argument('--force-ingest', action='store_true', help='force re-ingestion of data, ignoring cache')
     parser.add_argument('--silent', action='store_true', help='run in silent mode, suppressing progress bars')
     parser.add_argument('--force-ingest-osm', action='store_true', help='force re-ingestion of osm data, ignoring cache')
+    parser.add_argument('--force-ingest-waypoints', action='store_true', help='force re-ingestion of waypoints data, ignoring cache')
     args = parser.parse_args()
 
     if not os.path.exists(cache_dir):
@@ -62,7 +63,13 @@ def main():
         print("starting")
     engine = get_db_engine()
 
-    # ingest
+    # ingest waypoints data
+    waypoints_success = fetch_csdi_waypoints_data(force_ingest=(args.force_ingest or args.force_ingest_waypoints), silent=args.silent)
+    if not waypoints_success:
+        print("Failed to fetch waypoints data")
+        return
+
+    # kmb
     raw_kmb_routes = fetch_or_load_from_cache("kmb_routes", kmb_client.fetch_all_routes, args.force_ingest, silent=args.silent)
     raw_kmb_stops = fetch_or_load_from_cache("kmb_stops", kmb_client.fetch_all_stops, args.force_ingest, silent=args.silent)
     raw_kmb_route_stops = fetch_or_load_from_cache("kmb_route_stops", kmb_client.fetch_all_route_stops, args.force_ingest, silent=args.silent)
@@ -95,6 +102,7 @@ def main():
     if not args.silent:
         print(f"mtr bus data - routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}, fares: {len(raw_mtrbus_fares) if raw_mtrbus_fares else 0}")
 
+    # mtr rails
     raw_mtr_lines_and_stations = fetch_or_load_from_cache("mtr_lines_and_stations", mtr_rails_client.fetch_mtr_lines_and_stations_with_locations, args.force_ingest, silent=args.silent)
     raw_mtr_lines_fares = fetch_or_load_from_cache("mtr_lines_fares", mtr_rails_client.fetch_mtr_lines_fares, args.force_ingest, silent=args.silent)
     raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest, silent=args.silent)
@@ -102,7 +110,12 @@ def main():
     raw_airport_express_fares = fetch_or_load_from_cache("airport_express_fares", mtr_rails_client.fetch_airport_express_fares, args.force_ingest, silent=args.silent)
     raw_mtr_headway = fetch_or_load_from_cache("mtr_headway", mtr_headway.scrape_train_frequency, args.force_ingest, silent=args.silent)
     raw_mtr_exits = fetch_or_load_from_cache("mtr_exits", mtr_exit_client.fetch_mtr_exits, args.force_ingest, silent=args.silent)
+
+    # light rail stops
     raw_light_rail_stops = fetch_or_load_from_cache("light_rail_stops", light_rail_stops_fetcher.fetch_light_rail_stops, args.force_ingest, silent=args.silent)
+
+    # osm
+    raw_osm_data = fetch_or_load_from_cache("osm_routes", osm_parser.fetch_osm_routes, args.force_ingest, force_ingest_osm=args.force_ingest_osm, silent=args.silent)
 
     # citybus
     raw_citybus_routes = fetch_or_load_from_cache("citybus_routes", citybus_client.fetch_all_routes, args.force_ingest, silent=args.silent)
@@ -208,11 +221,13 @@ def main():
         silent=args.silent
     )
 
+    # export
     export_unified_feed(
         engine=engine,
-        output_dir=os.path.join("output", "gtfs"),
+        output_dir="output",
         journey_time_data=raw_journey_time_data,
         mtr_headway_data=raw_mtr_headway,
+        osm_data=raw_osm_data,
         silent=args.silent
     )
 
