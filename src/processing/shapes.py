@@ -1,10 +1,7 @@
 import pandas as pd
-from fuzzywuzzy import fuzz
 import os
 import json
 from math import radians, sin, cos, sqrt, atan2
-from collections import OrderedDict
-import re
 from tqdm import tqdm
 
 def lat_long_dist(lat1, lon1, lat2, lon2):
@@ -31,6 +28,15 @@ def generate_shapes_from_csdi_files(output_path, silent=False):
 
         for filename in tqdm(files_to_process, desc="Generating shapes from CSDI files", unit="file", disable=silent):
             filepath = os.path.join(waypoints_dir, filename)
+            
+            try:
+                base_filename = os.path.splitext(filename)[0]
+                gov_gtfs_id, bound = base_filename.split('-')
+            except ValueError:
+                if not silent:
+                    print(f"Warning: Could not parse filename {filename}")
+                continue
+
             with open(filepath, 'r', encoding='utf-8') as f:
                 try:
                     data = json.load(f)
@@ -45,13 +51,7 @@ def generate_shapes_from_csdi_files(output_path, silent=False):
             feature = data['features'][0]
             properties = feature['properties']
             
-            route_id = properties.get('ROUTE_ID')
-            route_seq = properties.get('ROUTE_SEQ')
-            if route_id is None or route_seq is None:
-                continue
-            
-            direction_char = 'O' if route_seq == 1 else 'I'
-            shape_id = f"CSDI-{route_id}-{direction_char}"
+            shape_id = f"CSDI-{gov_gtfs_id}-{bound}"
 
             geom_type = feature['geometry']['type']
             coords = feature['geometry']['coordinates']
@@ -61,10 +61,6 @@ def generate_shapes_from_csdi_files(output_path, silent=False):
             else:
                 all_coords = coords
 
-            # Hard cut: remove first and last points
-            if len(all_coords) > 2:
-                all_coords = all_coords[1:-1]
-
             dist_traveled = 0
             prev_lat, prev_lon = None, None
             for i, (lon, lat) in enumerate(all_coords):
@@ -73,20 +69,15 @@ def generate_shapes_from_csdi_files(output_path, silent=False):
                 f_out.write(f"{shape_id},{lat},{lon},{i+1},{dist_traveled}\n")
                 prev_lat, prev_lon = lat, lon
 
-            route_no_match = re.search(r'([a-zA-Z0-9]+)', properties.get('ROUTE_NAMEE', ''))
-            route_no = route_no_match.group(1) if route_no_match else None
-
             shape_info_list.append({
                 'shape_id': shape_id,
-                'agency_id': properties.get('COMPANY_CODE'),
-                'route_short_name': route_no,
-                'origin_en': properties.get('ST_STOP_NAMEE'),
-                'destination_en': properties.get('ED_STOP_NAMEE'),
+                'gov_route_id': properties.get('ROUTE_ID'),
+                'bound': bound
             })
 
     return True, shape_info_list
 
-def match_trips_to_csdi_shapes(trips_df, shape_info, silent=False):
+def match_trips_to_csdi_shapes(trips_df, shape_info, engine, silent=False):
     if not shape_info:
         if not silent:
             print("No shape information available to match.")
@@ -94,46 +85,37 @@ def match_trips_to_csdi_shapes(trips_df, shape_info, silent=False):
         return trips_df
 
     shape_info_df = pd.DataFrame(shape_info)
-    shape_info_df.dropna(subset=['agency_id', 'route_short_name', 'origin_en', 'destination_en'], inplace=True)
 
-    # Handle co-operated routes by splitting the agency_id string and exploding the DataFrame
-    shape_info_df['agency_id'] = shape_info_df['agency_id'].str.split('+')
-    shape_info_df = shape_info_df.explode('agency_id')
+    gov_trips_df = pd.read_sql("SELECT trip_id, route_id, service_id FROM gov_gtfs_trips", engine)
+    gov_routes_df = pd.read_sql("SELECT route_id, route_short_name FROM gov_gtfs_routes", engine)
 
-    agency_map = {
-        'KMB': 'KMB', 'LWB': 'KMB', 'CTB': 'CTB',
-        'NWFB': 'CTB', 'NLB': 'NLB', 'MTRB': 'MTRB'
-    }
-    shape_info_df['agency_id'] = shape_info_df['agency_id'].map(agency_map)
-    
-    trips_df_with_agency = trips_df.assign(
-        agency_id=trips_df['route_id'].apply(lambda x: x.split('-')[0])
+    gov_df = pd.merge(gov_trips_df, gov_routes_df, on='route_id')
+    gov_df['service_id'] = gov_df['service_id'].astype(str)
+    # Parse direction_id and convert to match our mapping: 0=outbound, 1=inbound
+    parsed_direction = gov_df['trip_id'].str.split('-').str[1].astype(int)
+    gov_df['direction_id'] = (parsed_direction == 2).astype(int)
+    gov_df['bound'] = gov_df['direction_id'].apply(lambda x: 'I' if x == 1 else 'O')
+
+    # Create a mapping from our trip_id to the government's route_id
+    trip_to_gov_route_map = trips_df.merge(
+        gov_df,
+        left_on=['original_service_id', 'route_short_name', 'direction_id'],
+        right_on=['service_id', 'route_short_name', 'direction_id'],
+        suffixes=('', '_gov')
     )
 
-    merged_df = pd.merge(
-        trips_df_with_agency,
+    # Merge with shape_info_df to get the shape_id
+    # Need to match on route_id_gov (from gov data) to gov_route_id (from shapes)
+    trips_with_shapes = trip_to_gov_route_map.merge(
         shape_info_df,
-        on=['agency_id', 'route_short_name'],
-        how='left',
-        suffixes=['_trip', '_shape']
+        left_on=['route_id_gov', 'bound'],
+        right_on=['gov_route_id', 'bound'],
+        how='left'
     )
 
-    def calculate_match_score(row):
-        if pd.notna(row['origin_en_trip']) and pd.notna(row['origin_en_shape']) and \
-           pd.notna(row['destination_en_trip']) and pd.notna(row['destination_en_shape']):
-            origin_score = fuzz.ratio(str(row['origin_en_trip']).lower(), str(row['origin_en_shape']).lower())
-            dest_score = fuzz.ratio(str(row['destination_en_trip']).lower(), str(row['destination_en_shape']).lower())
-            return (origin_score + dest_score) / 2
-        return 0
+    # Merge back to the original trips_df
+    final_trips = trips_df.merge(trips_with_shapes[['trip_id', 'shape_id']], on='trip_id', how='left')
 
-    merged_df['match_score'] = merged_df.apply(calculate_match_score, axis=1)
-    
-    merged_df = merged_df.sort_values(by='match_score', ascending=False)
-    
-    best_matches = merged_df.drop_duplicates(subset=['trip_id'], keep='first')
-    
-    final_trips = trips_df.merge(best_matches[['trip_id', 'shape_id']], on='trip_id', how='left')
-    
     if not silent:
         matched_count = final_trips['shape_id'].notna().sum()
         total_trips = len(final_trips)
