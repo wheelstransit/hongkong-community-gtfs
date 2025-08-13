@@ -1,3 +1,5 @@
+print("hello!!")
+
 import argparse
 import os
 import pickle
@@ -27,8 +29,11 @@ from src.ingest.waypoints_client import fetch_csdi_waypoints_data
 
 cache_dir = ".cache"
 
-def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, *args, **kwargs):
+def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, force_ingest_gov_gtfs=False, *args, **kwargs):
     if force_ingest_osm and 'osm' in cache_key:
+        force_ingest = True
+    
+    if force_ingest_gov_gtfs and ('gov_' in cache_key or 'gov-' in cache_key):
         force_ingest = True
 
     cache_file = os.path.join(cache_dir, f"{cache_key}.pkl")
@@ -54,6 +59,7 @@ def main():
     parser.add_argument('--silent', action='store_true', help='run in silent mode, suppressing progress bars')
     parser.add_argument('--force-ingest-osm', action='store_true', help='force re-ingestion of osm data, ignoring cache')
     parser.add_argument('--force-ingest-waypoints', action='store_true', help='force re-ingestion of waypoints data, ignoring cache')
+    parser.add_argument('--force-ingest-gov-gtfs', action='store_true', help='force re-ingestion of government GTFS data, ignoring cache')
     args = parser.parse_args()
 
     if not os.path.exists(cache_dir):
@@ -77,14 +83,16 @@ def main():
         print(f"kmb data - routes: {len(raw_kmb_routes) if raw_kmb_routes else 0}, stops: {len(raw_kmb_stops) if raw_kmb_stops else 0}, route-stops: {len(raw_kmb_route_stops) if raw_kmb_route_stops else 0}")
 
     # gov gtfs
-    raw_gov_frequencies = fetch_or_load_from_cache("gov_frequencies", gov_gtfs_client.fetch_frequencies_data, args.force_ingest, silent=args.silent)
-    raw_gov_trips = fetch_or_load_from_cache("gov_trips", gov_gtfs_client.fetch_trips_data, args.force_ingest, silent=args.silent)
-    raw_gov_routes = fetch_or_load_from_cache("gov_routes", gov_gtfs_client.fetch_routes_data, args.force_ingest, silent=args.silent)
-    raw_gov_calendar = fetch_or_load_from_cache("gov_calendar", gov_gtfs_client.fetch_calendar_data, args.force_ingest, silent=args.silent)
-    raw_gov_calendar_dates = fetch_or_load_from_cache("gov_calendar_dates", gov_gtfs_client.fetch_calendar_dates_data, args.force_ingest, silent=args.silent)
-    raw_gov_fares = fetch_or_load_from_cache("gov_fares", gov_gtfs_client.fetch_fare_data, args.force_ingest, silent=args.silent)
+    raw_gov_frequencies = fetch_or_load_from_cache("gov_frequencies", gov_gtfs_client.fetch_frequencies_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_trips = fetch_or_load_from_cache("gov_trips", gov_gtfs_client.fetch_trips_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_routes = fetch_or_load_from_cache("gov_routes", gov_gtfs_client.fetch_routes_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_calendar = fetch_or_load_from_cache("gov_calendar", gov_gtfs_client.fetch_calendar_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_calendar_dates = fetch_or_load_from_cache("gov_calendar_dates", gov_gtfs_client.fetch_calendar_dates_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_fares = fetch_or_load_from_cache("gov_fares", gov_gtfs_client.fetch_fare_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_stops = fetch_or_load_from_cache("gov_stops", gov_gtfs_client.fetch_stops_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_stop_times = fetch_or_load_from_cache("gov_stop_times", gov_gtfs_client.fetch_stop_times_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
     if not args.silent:
-        print(f"gov gtfs data - frequencies: {len(raw_gov_frequencies) if raw_gov_frequencies else 0}, trips: {len(raw_gov_trips) if raw_gov_trips else 0}, routes: {len(raw_gov_routes) if raw_gov_routes else 0}, calendar: {len(raw_gov_calendar) if raw_gov_calendar else 0}, fares: {type(raw_gov_fares)} with {len(raw_gov_fares) if raw_gov_fares else 0} keys")
+        print(f"gov gtfs data - frequencies: {len(raw_gov_frequencies) if raw_gov_frequencies else 0}, trips: {len(raw_gov_trips) if raw_gov_trips else 0}, routes: {len(raw_gov_routes) if raw_gov_routes else 0}, calendar: {len(raw_gov_calendar) if raw_gov_calendar else 0}, fares: {type(raw_gov_fares)} with {len(raw_gov_fares) if raw_gov_fares else 0} keys, stops: {len(raw_gov_stops) if raw_gov_stops else 0}, stop_times: {len(raw_gov_stop_times) if raw_gov_stop_times else 0}")
 
     # gmb
     gmb_client_instance = gmb_client.GMBClient(silent=args.silent)
@@ -198,6 +206,8 @@ def main():
         raw_calendar=raw_gov_calendar,
         raw_calendar_dates=raw_gov_calendar_dates,
         raw_fares=raw_gov_fares,
+        raw_stops=raw_gov_stops,
+        raw_stop_times=raw_gov_stop_times,
         engine=engine,
         silent=args.silent
     )

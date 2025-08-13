@@ -7,6 +7,8 @@ CALENDAR_URL = "https://static.data.gov.hk/td/pt-headway-en/calendar.txt"
 CALENDAR_DATES_URL = "https://static.data.gov.hk/td/pt-headway-en/calendar_dates.txt"
 TRIPS_URL = "https://static.data.gov.hk/td/pt-headway-en/trips.txt"
 ROUTES_URL = "https://static.data.gov.hk/td/pt-headway-en/routes.txt"
+STOPS_URL = "https://static.data.gov.hk/td/pt-headway-en/stops.txt"
+STOP_TIMES_URL = "https://static.data.gov.hk/td/pt-headway-en/stop_times.txt"
 
 def fetch_frequencies_data(silent=False):
     """Fetches the frequencies (headway) data from frequencies.txt."""
@@ -100,6 +102,34 @@ def fetch_calendar_dates_data(silent=False):
             print(f"Error fetching calendar dates data: {e}")
         return None
 
+def fetch_stops_data(silent=False):
+    """Fetches the stops data."""
+    if not silent:
+        print("Fetching stops data from Gov GTFS source...")
+    try:
+        df = pd.read_csv(STOPS_URL)
+        if not silent:
+            print(f"Successfully fetched {len(df)} stop records.")
+        return df.to_dict('records')
+    except Exception as e:
+        if not silent:
+            print(f"Error fetching stops data: {e}")
+        return None
+
+def fetch_stop_times_data(silent=False):
+    """Fetches the stop_times data which contains stop sequences for trips."""
+    if not silent:
+        print("Fetching stop_times data from Gov GTFS source...")
+    try:
+        df = pd.read_csv(STOP_TIMES_URL)
+        if not silent:
+            print(f"Successfully fetched {len(df)} stop_times records.")
+        return df.to_dict('records')
+    except Exception as e:
+        if not silent:
+            print(f"Error fetching stop_times data: {e}")
+        return None
+
 if __name__ == '__main__':
     print("testing")
 
@@ -139,6 +169,18 @@ if __name__ == '__main__':
     if calendar_dates_data:
         print("Sample calendar dates data:")
         print(calendar_dates_data[0])
+    print("-" * 20)
+
+    stops_data = fetch_stops_data()
+    if stops_data:
+        print("Sample stops data:")
+        print(stops_data[0])
+    print("-" * 20)
+
+    stop_times_data = fetch_stop_times_data()
+    if stop_times_data:
+        print("Sample stop_times data:")
+        print(stop_times_data[0])
     print("-" * 20)
 
     print("done testing :)")

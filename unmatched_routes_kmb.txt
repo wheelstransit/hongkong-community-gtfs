@@ -1,0 +1,43 @@
+UNMATCHED ROUTES ANALYSIS FOR KMB
+==================================================
+
+Total KMB routes: 4
+Total government GTFS routes: 8
+Successful route matches: 4
+Total service patterns matched: 8
+Unmatched KMB routes: 0
+Unmatched government routes: 0
+
+MATCHED KMB ROUTES (with service patterns):
+--------------------------------------------------
+Route Key: 170-I-1
+  Service 1: ID 287, Stop diff: 0, Gov Route: 1047
+  Service 2: ID 288, Stop diff: 0, Gov Route: 1047
+  Service 3: ID 448, Stop diff: 0, Gov Route: 1047
+
+Route Key: 170-I-2
+  Service 1: ID 448, Stop diff: 0, Gov Route: 8470
+
+Route Key: 170-O-1
+  Service 1: ID 287, Stop diff: 0, Gov Route: 1047
+  Service 2: ID 288, Stop diff: 0, Gov Route: 1047
+  Service 3: ID 448, Stop diff: 0, Gov Route: 1047
+
+Route Key: 170-O-2
+  Service 1: ID 448, Stop diff: 0, Gov Route: 8470
+
+
+==================================================
+
+UNMATCHED KMB ROUTES:
+------------------------------
+
+==================================================
+
+UNMATCHED GOVERNMENT GTFS ROUTES:
+-----------------------------------
+
+==================================================
+POTENTIAL MATCHING ISSUES ANALYSIS:
+----------------------------------------
+

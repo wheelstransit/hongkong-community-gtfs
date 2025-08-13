@@ -7,6 +7,7 @@ from src.processing.stop_unification import unify_stops_by_name_and_distance
 from src.processing.stop_times import generate_stop_times_for_agency_optimized as generate_stop_times_for_agency
 from src.processing.shapes import generate_shapes_from_csdi_files, match_trips_to_csdi_shapes
 from src.processing.utils import get_direction
+from src.processing.gtfs_route_matcher import match_operator_routes_to_government_gtfs, match_operator_routes_with_coop_fallback
 from datetime import timedelta
 import re
 from typing import Union
@@ -108,6 +109,9 @@ def resolve_overlapping_frequencies(frequencies_df: pd.DataFrame) -> pd.DataFram
     return final_df.drop(columns=['start_time_td', 'end_time_td'])
 
 def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict, mtr_headway_data: dict, osm_data: dict, silent: bool = False):
+    print("==========================================")
+    print("ENTERING export_unified_feed")
+    print("==========================================")
     if not silent:
         print("--- Starting Unified GTFS Export Process ---")
 
@@ -143,7 +147,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         .str.replace(r'\s*-\s*', ' - ', regex=True)
         .str.replace(r'([^\s])(\([A-Za-z0-9]+\))', r'\1 \2', regex=True)
     )
-    kmb_stops_gdf, kmb_duplicates_map = unify_stops_by_name_and_distance(kmb_stops_gdf, 'stop_name', 'stop_id', silent=silent)
+    kmb_stops_gdf, kmb_duplicates_map = (kmb_stops_gdf, {})
     kmb_stops_gdf['stop_lat'] = kmb_stops_gdf.geometry.y
     kmb_stops_gdf['stop_lon'] = kmb_stops_gdf.geometry.x
     kmb_stops_final = kmb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -161,7 +165,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     gmb_stops_gdf = gpd.read_postgis("SELECT * FROM gmb_stops", engine, geom_col='geometry')
     gmb_stops_gdf['stop_id'] = 'GMB-' + gmb_stops_gdf['stop_id'].astype(str)
     gmb_stops_gdf['stop_name'] = gmb_stops_gdf['stop_name_en']
-    gmb_stops_gdf, gmb_duplicates_map = unify_stops_by_name_and_distance(gmb_stops_gdf, 'stop_name', 'stop_id', silent=silent)
+    gmb_stops_gdf, gmb_duplicates_map = (gmb_stops_gdf, {})
     gmb_stops_gdf['stop_lat'] = gmb_stops_gdf.geometry.y
     gmb_stops_gdf['stop_lon'] = gmb_stops_gdf.geometry.x
     gmb_stops_final = gmb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -170,7 +174,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     mtrbus_stops_gdf = gpd.read_postgis("SELECT * FROM mtrbus_stops", engine, geom_col='geometry')
     mtrbus_stops_gdf['stop_id'] = 'MTRB-' + mtrbus_stops_gdf['stop_id'].astype(str)
     mtrbus_stops_gdf['stop_name'] = mtrbus_stops_gdf['name_en']
-    mtrbus_stops_gdf, mtrbus_duplicates_map = unify_stops_by_name_and_distance(mtrbus_stops_gdf, 'stop_name', 'stop_id', silent=silent)
+    mtrbus_stops_gdf, mtrbus_duplicates_map = (mtrbus_stops_gdf, {})
     mtrbus_stops_gdf['stop_lat'] = mtrbus_stops_gdf.geometry.y
     mtrbus_stops_gdf['stop_lon'] = mtrbus_stops_gdf.geometry.x
     mtrbus_stops_final = mtrbus_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -179,7 +183,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     nlb_stops_gdf = gpd.read_postgis("SELECT * FROM nlb_stops", engine, geom_col='geometry')
     nlb_stops_gdf['stop_id'] = 'NLB-' + nlb_stops_gdf['stopId'].astype(str)
     nlb_stops_gdf['stop_name'] = nlb_stops_gdf['stopName_e']
-    nlb_stops_gdf, nlb_duplicates_map = unify_stops_by_name_and_distance(nlb_stops_gdf, 'stop_name', 'stop_id', silent=silent)
+    nlb_stops_gdf, nlb_duplicates_map = (nlb_stops_gdf, {})
     nlb_stops_gdf['stop_lat'] = nlb_stops_gdf.geometry.y
     nlb_stops_gdf['stop_lon'] = nlb_stops_gdf.geometry.x
     nlb_stops_final = nlb_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']]
@@ -248,6 +252,19 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     gov_routes_df = pd.read_sql("SELECT * FROM gov_gtfs_routes", engine)
     gov_trips_df = pd.read_sql("SELECT * FROM gov_gtfs_trips", engine)
     gov_frequencies_df = pd.read_sql("SELECT * FROM gov_gtfs_frequencies", engine)
+    
+    # Load new government data for stop-sequence matching
+    try:
+        gov_stops_df = pd.read_sql("SELECT * FROM gov_gtfs_stops", engine)
+        gov_stop_times_df = pd.read_sql("SELECT * FROM gov_gtfs_stop_times", engine)
+        if not silent:
+            print(f"Loaded government stops ({len(gov_stops_df)}) and stop_times ({len(gov_stop_times_df)}) for stop-sequence matching.")
+    except Exception as e:
+        if not silent:
+            print(f"Warning: Could not load government stops/stop_times data: {e}")
+        gov_stops_df = pd.DataFrame()
+        gov_stop_times_df = pd.DataFrame()
+    
     try:
         parsed_direction = gov_trips_df['trip_id'].str.split('-').str[1].astype(int)
         # Government uses: 1=outbound, 2=inbound  
@@ -305,77 +322,78 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         })
     final_kmb_routes = pd.DataFrame(final_kmb_routes_list)
 
-    kmb_trips_source = kmb_stoptimes_df[['route', 'bound', 'service_type']].drop_duplicates()
-    kmb_trips_source = pd.merge(kmb_trips_source, kmb_routes_df[['route', 'bound', 'service_type', 'orig_en', 'dest_en']].drop_duplicates(), on=['route', 'bound', 'service_type'], how='left')
-
+    # Use enhanced matching for KMB routes
+    if not silent:
+        print("Using enhanced stop-count-based matching for KMB routes...")
+    
+    kmb_route_matches = match_operator_routes_to_government_gtfs(
+        engine=engine,
+        operator_name="KMB",
+        debug=not silent
+    )
+    
     kmb_trips_list = []
-    for _, trip_info in kmb_trips_source.iterrows():
-        route_short_name = trip_info['route']
-        bound = trip_info['bound']
-        service_type = trip_info['service_type']
-        direction_id = 1 if bound == 'I' else 0  # Fixed: I=inbound=1, O=outbound=0
-        agency_id = 'KMB'
-
-        # Create route long name for better matching
-        route_long_name = f"{trip_info['orig_en']} - {trip_info['dest_en']}"
-
-        # Step 1: Match by route number + direction + route long name
-        matching_gov_services = gov_trips_with_route_info[
-            (gov_trips_with_route_info['agency_id'].str.contains('KMB|LWB', na=False)) &
-            (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-            (gov_trips_with_route_info['direction_id'] == direction_id) &
-            (gov_trips_with_route_info['route_long_name'].str.contains(trip_info['orig_en'], na=False) |
-             gov_trips_with_route_info['route_long_name'].str.contains(trip_info['dest_en'], na=False))
-        ]['service_id'].unique()
-        
-        # Step 2: Fallback to route number + direction only
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains('KMB|LWB', na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-                (gov_trips_with_route_info['direction_id'] == direction_id)
-            ]['service_id'].unique()
-        
-        # Step 3: Fallback to route number only (any direction)
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name)
-            ]['service_id'].unique()
-        
-        # Step 4: Fallback to partial route number match
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'].str.startswith(route_short_name, na=False))
-            ]['service_id'].unique()
-        
-        # Step 5: Final fallback
-        if len(matching_gov_services) == 0:
-            matching_gov_services = [f"DEFAULT_{service_type}"]
-
-        # Create trips for ALL matching service IDs
-        for service_id in matching_gov_services:
-            kmb_trips_list.append({
-                'route_id': f"KMB-{route_short_name}",
-                'service_id': f"KMB-{route_short_name}-{bound}-{service_id}",  # Include direction in service_id
-                'trip_id': f"KMB-{route_short_name}-{bound}-{service_type}-{service_id}",
-                'direction_id': direction_id,
-                'bound': bound,
-                'route_short_name': route_short_name,
-                'route_long_name': route_long_name,
-                'original_service_id': service_id,
-                'service_type': service_type,
-                'origin_en': trip_info['orig_en'],
-                'destination_en': trip_info['dest_en']
-            })
-    kmb_trips_df = pd.DataFrame(kmb_trips_list)
+    if kmb_route_matches:
+        for route_key, route_matches in kmb_route_matches.items():
+            route_short_name, bound, service_type = route_key.split('-')
+            direction_id = 1 if bound == 'I' else 0
+            
+            # Find the corresponding database route info
+            matching_db_routes = kmb_routes_df[
+                (kmb_routes_df['route'] == route_short_name) & 
+                (kmb_routes_df['bound'] == bound) &
+                (kmb_routes_df['service_type'] == service_type)
+            ]
+            
+            if not matching_db_routes.empty:
+                route_info = matching_db_routes.iloc[0]
+                for match in route_matches:
+                    kmb_trips_list.append({
+                        'route_id': f"KMB-{route_short_name}",
+                        'service_id': f"KMB-{route_short_name}-{bound}-{match['gov_service_id']}",
+                        'trip_id': f"KMB-{route_short_name}-{bound}-{service_type}-{match['gov_service_id']}",
+                        'direction_id': direction_id,
+                        'bound': bound,
+                        'route_short_name': route_short_name,
+                        'route_long_name': f"{route_info.get('orig_en', '')} - {route_info.get('dest_en', '')}",
+                        'original_service_id': match['gov_service_id'],
+                        'gov_route_id': match['gov_route_id'],  # Add this for proper shape matching
+                        'service_type': service_type,
+                        'origin_en': route_info.get('orig_en', ''),
+                        'destination_en': route_info.get('dest_en', '')
+                    })
+    
+    # Create DataFrame with required columns even if empty
+    if kmb_trips_list:
+        kmb_trips_df = pd.DataFrame(kmb_trips_list)
+    else:
+        if not silent:
+            print("Warning: Enhanced KMB matching failed, creating empty DataFrame")
+        kmb_trips_df = pd.DataFrame(columns=[
+            'route_id', 'service_id', 'trip_id', 'direction_id', 'bound', 'route_short_name', 
+            'route_long_name', 'original_service_id', 'gov_route_id', 'service_type', 'origin_en', 'destination_en'
+        ])
+    
+    # Ensure required columns exist for downstream processing
+    if 'original_service_id' not in kmb_trips_df.columns:
+        kmb_trips_df['original_service_id'] = 'DEFAULT'
+    if 'route_short_name' not in kmb_trips_df.columns:
+        kmb_trips_df['route_short_name'] = ''
     kmb_trips_df.drop_duplicates(subset=['trip_id'], keep='first', inplace=True)
 
     # -- Citybus --
     if not silent:
         print("Processing Citybus routes, trips, and stop_times...")
+
+    # Get co-op routes to exclude from Citybus processing
+    co_op_routes_df = pd.read_sql("SELECT DISTINCT route_short_name FROM gov_gtfs_routes WHERE agency_id = 'KMB+CTB'", engine)
+    co_op_routes_to_exclude = co_op_routes_df['route_short_name'].tolist()
+
     ctb_routes_df = pd.read_sql("SELECT * FROM citybus_routes", engine)
+
+    # Exclude co-op routes
+    ctb_routes_df = ctb_routes_df[~ctb_routes_df['route'].isin(co_op_routes_to_exclude)]
+
     ctb_routes_df['route_id'] = 'CTB-' + ctb_routes_df['route']
     ctb_routes_df['agency_id'] = 'CTB'
     ctb_routes_df['route_short_name'] = ctb_routes_df['route']
@@ -395,75 +413,248 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         })
     final_ctb_routes = pd.DataFrame(final_ctb_routes_list)
 
-    ctb_trips_list = []
-    for _, route in ctb_routes_df.iterrows():
-        route_short_name = route['route']
-        direction_id = 1 if route['dir'] == 'inbound' else 0
-        agency_id = 'CTB'
-        
-        # Create route long name for better matching
-        route_long_name = f"{route['orig_en']} - {route['dest_en']}"
-        
-        # Step 1: Get ALL services for this route+direction across all government route_ids
-        # Use origin/destination info for better matching
-        matching_gov_services = gov_trips_with_route_info[
-            (gov_trips_with_route_info['agency_id'].str.contains('CTB|NWFB', na=False)) &
-            (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-            (gov_trips_with_route_info['direction_id'] == direction_id) &
-            (gov_trips_with_route_info['route_long_name'].str.contains(route['orig_en'], na=False) |
-             gov_trips_with_route_info['route_long_name'].str.contains(route['dest_en'], na=False))
-        ]['service_id'].unique()
-        
-        # Step 2: Fallback to route number + direction only
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains('CTB|NWFB', na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-                (gov_trips_with_route_info['direction_id'] == direction_id)
-            ]['service_id'].unique()
-        
-        # Step 3: Fallback to route number only (any direction)
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name)
-            ]['service_id'].unique()
-        
-        # Step 4: Fallback to partial route number match
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'].str.startswith(route_short_name, na=False))
-            ]['service_id'].unique()
-        
-        # Step 5: Broad agency fallback
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False))
-            ]['service_id'].unique()
+    # Use enhanced stop-count-based matching for CTB routes with co-op route handling
+    if not silent:
+        print("Using enhanced stop-count-based matching for CTB routes with co-op handling...")
+    
+    # Get CTB route matches using the enhanced approach that handles co-op routes
+    if len(gov_stops_df) > 0 and len(gov_stop_times_df) > 0:
+        ctb_route_matches = match_operator_routes_with_coop_fallback(
+            engine=engine,
+            operator_name="CTB",
+            debug=not silent
+        )
+        if not silent:
+            print(f"Found stop-count matches for {len(ctb_route_matches)} CTB route variants.")
+    else:
+        if not silent:
+            print("Warning: Government stops/stop_times data not available, falling back to basic matching.")
+        ctb_route_matches = {}
 
-        # Step 6: Final fallback
-        if len(matching_gov_services) == 0:
-            matching_gov_services = ["DEFAULT"]
-        
-        # Create one trip per service (not per government route_id)
-        for service_id in matching_gov_services:
-            ctb_trips_list.append({
-                'route_id': f"CTB-{route_short_name}",
-                'service_id': f"CTB-{route_short_name}-{route['dir']}-{service_id}",
-                'trip_id': f"CTB-{route_short_name}-{route['dir']}-{service_id}",
-                'direction_id': direction_id,
-                'route_short_name': route_short_name,
-                'route_long_name': route_long_name,
-                'original_service_id': service_id,
-                'unique_route_id': route['unique_route_id'],
-                'origin_en': route['orig_en'],
-                'destination_en': route['dest_en']
-            })
+    ctb_trips_list = []
+    
+    # Use enhanced matching results to create trips - only process routes that have matches
+    # This prevents creating trips for routes that were intentionally filtered out (like circular route inbound directions)
+    if ctb_route_matches:
+        for route_key, route_matches in ctb_route_matches.items():
+            route_short_name, bound, service_type = route_key.split('-')
+            direction_id = 1 if bound == 'I' else 0
+            
+            # Find the corresponding database route info
+            matching_db_routes = ctb_routes_df[
+                (ctb_routes_df['route'] == route_short_name) & 
+                (ctb_routes_df['dir'] == ('inbound' if bound == 'I' else 'outbound'))
+            ]
+            
+            if not matching_db_routes.empty:
+                route = matching_db_routes.iloc[0]
+                route_long_name = f"{route['orig_en']} - {route['dest_en']}"
+                
+                # Create trips for each matched government service
+                for match in route_matches:
+                    ctb_trips_list.append({
+                        'route_id': f"CTB-{route_short_name}",
+                        'service_id': f"CTB-{route_short_name}-{route['dir']}-{match['gov_service_id']}",
+                        'trip_id': f"CTB-{route_short_name}-{route['dir']}-{match['gov_service_id']}",
+                        'direction_id': direction_id,
+                        'bound': bound,
+                        'route_short_name': route_short_name,
+                        'route_long_name': route_long_name,
+                        'original_service_id': match['gov_service_id'],
+                        'unique_route_id': route['unique_route_id'],
+                        'origin_en': route['orig_en'],
+                        'destination_en': route['dest_en'],
+                        'stop_count_match': True,
+                        'stop_diff': match['stop_diff'],
+                        'gov_route_id': match['gov_route_id']
+                    })
+    
     ctb_trips_df = pd.DataFrame(ctb_trips_list)
     # Remove duplicate trips that might be created from multiple citybus route entries
     ctb_trips_df.drop_duplicates(subset=['trip_id'], keep='first', inplace=True)
-    ctb_stoptimes_df = pd.read_sql("SELECT * FROM citybus_stop_sequences", engine)
+    
+    # Load CTB stop sequences with special handling for circular routes
+    if not silent:
+        print("Loading CTB stop sequences with circular route handling...")
+    
+    # First, detect circular routes using the same logic as our matcher
+    circular_routes_query = """
+        SELECT DISTINCT gr.route_short_name as route
+        FROM gov_gtfs_routes gr
+        JOIN gov_gtfs_trips gt ON gr.route_id = gt.route_id
+        WHERE gr.agency_id = 'CTB'
+        GROUP BY gr.route_short_name
+        HAVING COUNT(DISTINCT CASE WHEN SPLIT_PART(gt.trip_id, '-', 2) = '2' THEN 1 END) = 0
+    """
+    circular_routes_df = pd.read_sql(circular_routes_query, engine)
+    circular_routes = circular_routes_df['route'].tolist() if not circular_routes_df.empty else []
+    
+    if not silent:
+        print(f"Detected {len(circular_routes)} circular CTB routes: {circular_routes}")
+        print(f"Is 22M circular? {'22M' in circular_routes}")
+    
+    # Debug: Check what stop sequences exist for 22M
+    debug_22m_query = """
+        SELECT 
+            cr.route,
+            cr.direction,
+            COUNT(css.sequence) as stop_count
+        FROM citybus_routes cr
+        JOIN citybus_stop_sequences css ON cr.unique_route_id = css.unique_route_id
+        WHERE cr.route = '22M'
+        GROUP BY cr.route, cr.direction
+        ORDER BY cr.route, cr.direction
+    """
+    debug_22m_df = pd.read_sql(debug_22m_query, engine)
+    if not silent:
+        print("22M stop counts by direction:")
+        for _, row in debug_22m_df.iterrows():
+            print(f"  {row['route']} {row['direction']}: {row['stop_count']} stops")
+    
+    # Load stop sequences with circular route merging
+    if circular_routes:
+        # For circular routes, merge outbound and inbound sequences
+        circular_routes_list = "','".join(circular_routes)
+        ctb_stop_sequences_query = f"""
+            WITH outbound_sequences AS (
+                -- Get outbound sequences for circular routes
+                SELECT 
+                    cr.route,
+                    cr.unique_route_id,
+                    css.stop_id,
+                    css.sequence,
+                    'outbound' as original_direction
+                FROM citybus_routes cr
+                JOIN citybus_stop_sequences css ON cr.unique_route_id = css.unique_route_id
+                WHERE cr.route IN ('{circular_routes_list}') 
+                    AND cr.direction = 'outbound'
+            ),
+            inbound_sequences AS (
+                -- Get inbound sequences for circular routes
+                SELECT 
+                    cr.route,
+                    cr.unique_route_id,
+                    css.stop_id,
+                    css.sequence,
+                    'inbound' as original_direction
+                FROM citybus_routes cr
+                JOIN citybus_stop_sequences css ON cr.unique_route_id = css.unique_route_id
+                WHERE cr.route IN ('{circular_routes_list}') 
+                    AND cr.direction = 'inbound'
+            ),
+            circular_merged AS (
+                -- Create proper circular route: skip inbound stops until we find non-overlapping pattern
+                SELECT 
+                    route,
+                    'outbound' as direction,
+                    unique_route_id,
+                    stop_id,
+                    sequence as merged_sequence,
+                    'from_outbound' as source
+                FROM outbound_sequences
+                
+                UNION ALL
+                
+                -- Add inbound stops starting from the first stop that doesn't exist in outbound
+                -- This creates proper circular: [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,b,a]
+                SELECT 
+                    ins.route,
+                    'outbound' as direction,
+                    ins.unique_route_id,
+                    ins.stop_id,
+                    (SELECT MAX(sequence) FROM outbound_sequences os WHERE os.route = ins.route) + 
+                    ROW_NUMBER() OVER (PARTITION BY ins.route ORDER BY ins.sequence) as merged_sequence,
+                    'from_inbound' as source
+                FROM inbound_sequences ins
+                WHERE ins.sequence >= (
+                    -- Find the first inbound sequence where the stop doesn't exist in outbound
+                    SELECT COALESCE(MIN(i2.sequence), 1)
+                    FROM inbound_sequences i2
+                    WHERE i2.route = ins.route
+                    AND NOT EXISTS (
+                        SELECT 1 FROM outbound_sequences obs
+                        WHERE obs.route = i2.route AND obs.stop_id = i2.stop_id
+                    )
+                )
+            ),
+            regular_routes AS (
+                -- For regular routes, keep normal outbound/inbound separation
+                SELECT 
+                    cr.route,
+                    cr.direction,
+                    cr.unique_route_id,
+                    css.stop_id,
+                    css.sequence as merged_sequence,
+                    'regular' as source
+                FROM citybus_routes cr
+                JOIN citybus_stop_sequences css ON cr.unique_route_id = css.unique_route_id
+                WHERE cr.route NOT IN ('{circular_routes_list}')
+            )
+            SELECT 
+                route,
+                direction,
+                unique_route_id,
+                stop_id,
+                merged_sequence as sequence,
+                source
+            FROM circular_merged
+            
+            UNION ALL
+            
+            SELECT 
+                route,
+                direction,
+                unique_route_id,
+                stop_id,
+                merged_sequence as sequence,
+                source
+            FROM regular_routes
+            
+            ORDER BY route, direction, sequence
+        """
+        ctb_stoptimes_df = pd.read_sql(ctb_stop_sequences_query, engine)
+        
+        if not silent:
+            route_22m_stops = ctb_stoptimes_df[ctb_stoptimes_df['route'] == '22M']
+            if not route_22m_stops.empty:
+                print(f"22M after intelligent circular merging: {len(route_22m_stops)} stops")
+                print(f"22M direction: {route_22m_stops['direction'].unique()}")
+                print(f"22M sequence range: {route_22m_stops['sequence'].min()} to {route_22m_stops['sequence'].max()}")
+                
+                # Show merge source breakdown
+                if 'source' in route_22m_stops.columns:
+                    source_counts = route_22m_stops['source'].value_counts()
+                    print(f"22M merge sources: {dict(source_counts)}")
+                
+                # Show first few and last few stops to verify merging
+                sorted_stops = route_22m_stops.sort_values('sequence')
+                print("First 5 stops:", sorted_stops.head(5)['sequence'].tolist())
+                print("Last 5 stops:", sorted_stops.tail(5)['sequence'].tolist())
+                
+                # Show total unique stops vs government GTFS expectation
+                print(f"22M total stops: {len(route_22m_stops)} (expected ~39 from gov GTFS)")
+            else:
+                print("No 22M stops found after merging!")
+                
+            # Also check if we have any circular routes processed
+            circular_processed = ctb_stoptimes_df[ctb_stoptimes_df['route'].isin(circular_routes)]
+            print(f"Total stops for all circular routes: {len(circular_processed)}")
+            
+            # Sample a few circular routes to check merging effectiveness
+            sample_routes = circular_routes[:5] if len(circular_routes) >= 5 else circular_routes
+            for route in sample_routes:
+                route_stops = ctb_stoptimes_df[ctb_stoptimes_df['route'] == route]
+                if len(route_stops) > 0:
+                    if 'source' in route_stops.columns:
+                        source_counts = route_stops['source'].value_counts()
+                        print(f"  {route}: {len(route_stops)} stops {dict(source_counts)}")
+                    else:
+                        print(f"  {route}: {len(route_stops)} stops")
+    else:
+        if not silent:
+            print("No circular routes detected, using normal loading...")
+        # No circular routes detected, use normal loading
+        ctb_stoptimes_df = pd.read_sql("SELECT * FROM citybus_stop_sequences", engine)
     ctb_stoptimes_df['stop_id'] = 'CTB-' + ctb_stoptimes_df['stop_id'].astype(str)
     ctb_stoptimes_df['stop_id'] = ctb_stoptimes_df['stop_id'].replace(ctb_duplicates_map)
 
@@ -513,79 +704,65 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     mtrbus_routes_df['route_short_name'] = mtrbus_routes_df['route_id']
     mtrbus_routes_df['route_id'] = 'MTRB-' + mtrbus_routes_df['route_id']
     final_mtrbus_routes = mtrbus_routes_df[['route_id', 'agency_id', 'route_short_name', 'route_long_name', 'route_type']].drop_duplicates(subset=['route_id']).copy()
-    mtrbus_trips_source = pd.read_sql("SELECT DISTINCT route_id, direction FROM mtrbus_stop_sequences", engine)
-    mtrbus_trips_source = pd.merge(mtrbus_trips_source, mtrbus_routes_df[['route_id', 'route_name_eng']].drop_duplicates(), on='route_id', how='left')
-
+    # Use enhanced matching for MTRB routes  
+    if not silent:
+        print("Using enhanced stop-count-based matching for MTRB routes...")
+    
+    mtrb_route_matches = match_operator_routes_to_government_gtfs(
+        engine=engine,
+        operator_name="MTRB", 
+        debug=not silent
+    )
+    
     mtrbus_trips_list = []
-    for _, trip_info in mtrbus_trips_source.iterrows():
-        route_short_name = trip_info['route_id']
-        agency_id = 'LRTFeeder'
-        direction_id = 0 if trip_info['direction'] == 'O' else 1
-
-        # Extract origin and destination from route name
-        origin_en = ''
-        destination_en = ''
-        if isinstance(trip_info['route_name_eng'], str) and ' to ' in trip_info['route_name_eng']:
-            parts = trip_info['route_name_eng'].split(' to ')
-            origin_en = parts[0]
-            destination_en = parts[1]
-
-        # Step 1: Match by route number + direction + route destinations
-        matching_gov_services = []
-        if origin_en and destination_en:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-                (gov_trips_with_route_info['direction_id'] == direction_id) &
-                (gov_trips_with_route_info['route_long_name'].str.contains(origin_en, na=False) |
-                 gov_trips_with_route_info['route_long_name'].str.contains(destination_en, na=False))
-            ]['service_id'].unique()
-
-        # Step 2: Fallback to route number + direction
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-                (gov_trips_with_route_info['direction_id'] == direction_id)
-            ]['service_id'].unique()
-        
-        # Step 3: Fallback to route number only
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name)
-            ]['service_id'].unique()
-        
-        # Step 4: Fallback to partial route match
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'].str.startswith(route_short_name, na=False))
-            ]['service_id'].unique()
-
-        # Step 5: Broad agency fallback
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False))
-            ]['service_id'].unique()
-
-        # Step 6: Final fallback
-        if len(matching_gov_services) == 0:
-            matching_gov_services = ["DEFAULT"]
-
-        for service_id in matching_gov_services:
-            mtrbus_trips_list.append({
-                'route_id': f"MTRB-{route_short_name}",
-                'service_id': f"MTRB-{route_short_name}-{trip_info['direction']}-{service_id}",  # Include direction in service_id
-                'trip_id': f"MTRB-{route_short_name}-{trip_info['direction']}-{service_id}",
-                'direction_id': direction_id,
-                'route_short_name': route_short_name,
-                'original_service_id': service_id,
-                'origin_en': origin_en,
-                'destination_en': destination_en
-            })
-    mtrbus_trips_df = pd.DataFrame(mtrbus_trips_list)
+    if mtrb_route_matches:
+        for route_key, route_matches in mtrb_route_matches.items():
+            route_short_name, bound, service_type = route_key.split('-')
+            direction_id = 0 if bound == 'O' else 1
+            
+            # Find the corresponding database route info
+            matching_db_routes = mtrbus_routes_df[mtrbus_routes_df['route_id'] == route_short_name]
+            
+            if not matching_db_routes.empty:
+                route_info = matching_db_routes.iloc[0]
+                
+                # Extract origin and destination from route name
+                origin_en = ''
+                destination_en = ''
+                if isinstance(route_info['route_name_eng'], str) and ' to ' in route_info['route_name_eng']:
+                    parts = route_info['route_name_eng'].split(' to ')
+                    origin_en = parts[0]
+                    destination_en = parts[1]
+                
+                for match in route_matches:
+                    mtrbus_trips_list.append({
+                        'route_id': f"MTRB-{route_short_name}",
+                        'service_id': f"MTRB-{route_short_name}-{bound}-{match['gov_service_id']}",
+                        'trip_id': f"MTRB-{route_short_name}-{bound}-{match['gov_service_id']}",
+                        'direction_id': direction_id,
+                        'route_short_name': route_short_name,
+                        'original_service_id': match['gov_service_id'],
+                        'origin_en': origin_en,
+                        'destination_en': destination_en
+                    })
+    
+    # Create DataFrame with required columns even if empty
+    if mtrbus_trips_list:
+        mtrbus_trips_df = pd.DataFrame(mtrbus_trips_list)
+    else:
+        if not silent:
+            print("Warning: Enhanced MTRB matching failed, creating empty DataFrame")
+        mtrbus_trips_df = pd.DataFrame(columns=[
+            'route_id', 'service_id', 'trip_id', 'direction_id', 'route_short_name', 
+            'original_service_id', 'origin_en', 'destination_en'
+        ])
     mtrbus_trips_df.drop_duplicates(subset=['trip_id'], keep='first', inplace=True)
+    
+    # Ensure required columns exist for downstream processing
+    if 'original_service_id' not in mtrbus_trips_df.columns:
+        mtrbus_trips_df['original_service_id'] = 'DEFAULT'
+    if 'route_short_name' not in mtrbus_trips_df.columns:
+        mtrbus_trips_df['route_short_name'] = ''
     mtrbus_stoptimes_df = pd.read_sql("SELECT * FROM mtrbus_stop_sequences", engine)
     mtrbus_stoptimes_df['trip_id'] = 'MTRB-' + mtrbus_stoptimes_df['route_id'] + '-' + mtrbus_stoptimes_df['direction']
     mtrbus_stoptimes_df['stop_id'] = 'MTRB-' + mtrbus_stoptimes_df['stop_id'].astype(str)
@@ -610,71 +787,58 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_nlb_routes = pd.DataFrame(final_nlb_routes_list)
     nlb_routes_df['direction_id'] = nlb_routes_df.apply(lambda row: get_direction(row['routeName_e'], row['orig_en']), axis=1)
 
+    # Use enhanced matching for NLB routes
+    if not silent:
+        print("Using enhanced stop-count-based matching for NLB routes...")
+    
+    nlb_route_matches = match_operator_routes_to_government_gtfs(
+        engine=engine,
+        operator_name="NLB",
+        debug=not silent
+    )
+    
     nlb_trips_list = []
-    for _, route_info in nlb_routes_df.iterrows():
-        route_short_name = route_info['routeNo']
-        direction_id = route_info['direction_id']
-        agency_id = 'NLB'
-
-        # Create route long name for better matching
-        route_long_name = route_info['routeName_e']
-
-        # Step 1: Match by route number + direction + route destinations
-        matching_gov_services = gov_trips_with_route_info[
-            (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-            (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-            (gov_trips_with_route_info['direction_id'] == direction_id) &
-            (gov_trips_with_route_info['route_long_name'].str.contains(route_info['orig_en'], na=False) |
-             gov_trips_with_route_info['route_long_name'].str.contains(route_info['dest_en'], na=False))
-        ]['service_id'].unique()
-        
-        # Step 2: Fallback to route number + direction
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name) &
-                (gov_trips_with_route_info['direction_id'] == direction_id)
-            ]['service_id'].unique()
-        
-        # Step 3: Fallback to route number only
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'] == route_short_name)
-            ]['service_id'].unique()
-        
-        # Step 4: Fallback to partial route match
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False)) &
-                (gov_trips_with_route_info['route_short_name'].str.startswith(route_short_name, na=False))
-            ]['service_id'].unique()
-
-        # Step 5: Broad agency fallback
-        if len(matching_gov_services) == 0:
-            matching_gov_services = gov_trips_with_route_info[
-                (gov_trips_with_route_info['agency_id'].str.contains(agency_id, na=False))
-            ]['service_id'].unique()
-
-        # Step 6: Final fallback
-        if len(matching_gov_services) == 0:
-            matching_gov_services = ["DEFAULT"]
-
-        for service_id in matching_gov_services:
-            nlb_trips_list.append({
-                'route_id': f"NLB-{route_short_name}",
-                'service_id': f"NLB-{route_short_name}-{route_info['routeId']}-{service_id}",
-                'trip_id': f"NLB-{route_short_name}-{route_info['routeId']}-{service_id}",
-                'direction_id': direction_id,
-                'route_short_name': route_short_name,
-                'original_service_id': service_id,
-                'route_long_name': route_info['routeName_e'],
-                'routeId': route_info['routeId'],
-                'origin_en': route_info['orig_en'],
-                'destination_en': route_info['dest_en']
-            })
-    nlb_trips_df = pd.DataFrame(nlb_trips_list)
+    if nlb_route_matches:
+        for route_key, route_matches in nlb_route_matches.items():
+            route_short_name = route_key.split('-')[0]  # NLB format: route-O-1
+            
+            # Find the corresponding database route info
+            matching_db_routes = nlb_routes_df[nlb_routes_df['routeNo'] == route_short_name]
+            
+            if not matching_db_routes.empty:
+                for _, route_info in matching_db_routes.iterrows():
+                    for match in route_matches:
+                        nlb_trips_list.append({
+                            'route_id': f"NLB-{route_short_name}",
+                            'agency_id': 'NLB',
+                            'service_id': f"NLB-{route_short_name}-{route_info['routeId']}-{match['gov_service_id']}",
+                            'trip_id': f"NLB-{route_short_name}-{route_info['routeId']}-{match['gov_service_id']}",
+                            'direction_id': route_info['direction_id'],
+                            'route_short_name': route_short_name,
+                            'original_service_id': match['gov_service_id'],
+                            'route_long_name': route_info['routeName_e'],
+                            'routeId': route_info['routeId'],
+                            'origin_en': route_info['orig_en'],
+                            'destination_en': route_info['dest_en']
+                        })
+    
+    # Create DataFrame with required columns even if empty
+    if nlb_trips_list:
+        nlb_trips_df = pd.DataFrame(nlb_trips_list)
+    else:
+        if not silent:
+            print("Warning: Enhanced NLB matching failed, creating empty DataFrame")
+        nlb_trips_df = pd.DataFrame(columns=[
+            'route_id', 'service_id', 'trip_id', 'direction_id', 'route_short_name', 
+            'original_service_id', 'route_long_name', 'routeId', 'origin_en', 'destination_en'
+        ])
     nlb_trips_df.drop_duplicates(subset=['trip_id'], keep='first', inplace=True)
+    
+    # Ensure required columns exist for downstream processing  
+    if 'original_service_id' not in nlb_trips_df.columns:
+        nlb_trips_df['original_service_id'] = 'DEFAULT'
+    if 'route_short_name' not in nlb_trips_df.columns:
+        nlb_trips_df['route_short_name'] = ''
     nlb_stoptimes_df = pd.read_sql("SELECT * FROM nlb_stop_sequences", engine)
     nlb_stoptimes_df['trip_id'] = 'NLB-' + nlb_stoptimes_df['routeNo'] + '-' + nlb_stoptimes_df['routeId'].astype(str)
     nlb_stoptimes_df['stop_id'] = 'NLB-' + nlb_stoptimes_df['stopId'].astype(str)
@@ -683,7 +847,9 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
 
     # -- MTR Rail --
     if not silent:
+        print("==========================================")
         print("Processing MTR Rail routes, trips, and stop_times...")
+        print("==========================================")
     mtr_lines_and_stations_df = pd.read_sql("SELECT * FROM mtr_lines_and_stations", engine)
     mtr_routes_df = mtr_lines_and_stations_df[['Line Code', 'English Name']].drop_duplicates(subset=['Line Code'])
     mtr_routes_df.rename(columns={'Line Code': 'route_id', 'English Name': 'route_long_name'}, inplace=True)
@@ -700,6 +866,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         trip_id_suffix = 'TRIP' if direction_id == 0 else 'TRIP-2'
         mtr_trips_list.append({
             'route_id': route_id,
+            'agency_id': 'MTRR',
             'service_id': f"{route_id}-SERVICE",
             'trip_id': f"{route_id}-{trip_id_suffix}",
             'direction_id': direction_id
@@ -734,12 +901,14 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     for _, route in lr_routes_df.iterrows():
         lr_trips_list.append({
             'route_id': route['route_id'],
+            'agency_id': 'LR',
             'service_id': f"{route['route_id']}-SERVICE",
             'trip_id': f"{route['route_id']}-TRIP",
             'direction_id': 0
         })
         lr_trips_list.append({
             'route_id': route['route_id'],
+            'agency_id': 'LR',
             'service_id': f"{route['route_id']}-SERVICE",
             'trip_id': f"{route['route_id']}-TRIP-2",
             'direction_id': 1
@@ -799,9 +968,71 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     ctb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('CTB', na=False)]
     ctb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(ctb_gov_routes_df['route_id'])]
     ctb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(ctb_gov_trips_df['trip_id'])]
-    ctb_stoptimes_df = generate_stop_times_for_agency(
-        'CTB', ctb_trips_df, ctb_stoptimes_df, ctb_gov_routes_df, ctb_gov_trips_df, ctb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
-    )
+    
+    # For CTB, preserve circular route merged sequences and only process regular routes
+    if circular_routes:
+        if not silent:
+            print("Preserving circular route merged sequences for CTB...")
+        
+        # Split CTB stop times into circular and regular routes
+        circular_stoptimes = ctb_stoptimes_df[ctb_stoptimes_df['route'].isin(circular_routes)].copy()
+        regular_stoptimes = ctb_stoptimes_df[~ctb_stoptimes_df['route'].isin(circular_routes)].copy()
+        
+        # Only process regular routes through generate_stop_times_for_agency
+        if not regular_stoptimes.empty:
+            regular_stoptimes = generate_stop_times_for_agency(
+                'CTB', ctb_trips_df, regular_stoptimes, ctb_gov_routes_df, ctb_gov_trips_df, ctb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
+            )
+        
+        # For circular routes, manually create stop_times with preserved sequences
+        circular_stop_times_list = []
+        for _, trip in ctb_trips_df.iterrows():
+            trip_route = trip['route_short_name']
+            trip_direction = trip.get('bound', 'outbound')
+            
+            if trip_route in circular_routes:
+                # Get the merged stop sequences for this circular route
+                route_stops = circular_stoptimes[
+                    (circular_stoptimes['route'] == trip_route) & 
+                    (circular_stoptimes['direction'] == 'outbound')  # All circular routes are 'outbound' after merging
+                ].sort_values('sequence')
+                
+                if not route_stops.empty:
+                    # Create stop_times entries preserving our merged 47-stop sequence
+                    base_time = 0  # Start at 00:00:00
+                    time_increment = 120  # 2 minutes between stops
+                    
+                    for idx, stop_row in route_stops.iterrows():
+                        arrival_time = base_time + (stop_row['sequence'] - 1) * time_increment
+                        circular_stop_times_list.append({
+                            'trip_id': trip['trip_id'],
+                            'arrival_time': format_timedelta(timedelta(seconds=arrival_time)),
+                            'departure_time': format_timedelta(timedelta(seconds=arrival_time)),
+                            'stop_id': stop_row['stop_id'],
+                            'stop_sequence': int(stop_row['sequence'])
+                        })
+        
+        # Combine circular and regular stop times
+        if circular_stop_times_list:
+            circular_stop_times_df = pd.DataFrame(circular_stop_times_list)
+            if not regular_stoptimes.empty:
+                ctb_stoptimes_df = pd.concat([regular_stoptimes, circular_stop_times_df], ignore_index=True)
+            else:
+                ctb_stoptimes_df = circular_stop_times_df
+        else:
+            ctb_stoptimes_df = regular_stoptimes
+            
+        if not silent:
+            route_22m_final = ctb_stoptimes_df[ctb_stoptimes_df['trip_id'].str.contains('22M', na=False)]
+            if not route_22m_final.empty:
+                print(f"Final 22M stop_times: {len(route_22m_final)} entries")
+                print(f"22M sequence range: {route_22m_final['stop_sequence'].min()} to {route_22m_final['stop_sequence'].max()}")
+            
+    else:
+        # No circular routes, use normal processing
+        ctb_stoptimes_df = generate_stop_times_for_agency(
+            'CTB', ctb_trips_df, ctb_stoptimes_df, ctb_gov_routes_df, ctb_gov_trips_df, ctb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
+        )
 
     gmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('GMB', na=False)]
     gmb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(gmb_gov_routes_df['route_id'])]

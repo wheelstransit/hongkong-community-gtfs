@@ -208,13 +208,158 @@ def process_and_load_citybus_data(raw_routes: list, raw_stop_details: list, raw_
         right_on='route_id'
     )
 
-    # Swap origin and destination for inbound routes
-    inbound_mask = routes_df['direction'] == 'inbound'
+    # Detect circular routes by checking if destination contains "circular"
+    circular_routes = set()
+    for _, route in routes_info_df.iterrows():
+        route_destinations = [
+            str(route.get('dest_en', '')).lower(),
+            str(route.get('dest_tc', '')).lower(),
+            str(route.get('dest_sc', '')).lower()
+        ]
+        if any('circular' in dest for dest in route_destinations):
+            circular_routes.add(route['route'])
+            
+    if not silent and circular_routes:
+        print(f"Detected {len(circular_routes)} circular routes: {sorted(list(circular_routes))[:10]}...")
+
+    # Process route sequences with circular route handling
+    if not silent:
+        print("Processing Citybus route-stop sequences...")
+    route_stops_df = pd.DataFrame(raw_route_sequences)
+    
+    # Separate circular and regular routes
+    circular_sequences = []
+    regular_sequences = []
+    
+    for _, row in route_stops_df.iterrows():
+        if row['route_id'] in circular_routes:
+            circular_sequences.append(row)
+        else:
+            regular_sequences.append(row)
+    
+    # Process circular routes by merging inbound and outbound
+    merged_circular_sequences = []
+    if circular_sequences:
+        if not silent:
+            print(f"Merging {len(circular_sequences)} circular route sequences...")
+        
+        # Group by route_id
+        circular_by_route = {}
+        for seq in circular_sequences:
+            route_id = seq['route_id']
+            if route_id not in circular_by_route:
+                circular_by_route[route_id] = {}
+            circular_by_route[route_id][seq['direction']] = seq
+        
+        for route_id, directions in circular_by_route.items():
+            if 'inbound' in directions and 'outbound' in directions:
+                # Merge inbound and outbound for circular routes
+                inbound_stops = directions['inbound']['stop_ids']
+                outbound_stops = directions['outbound']['stop_ids']
+                
+                # Find overlapping stops (typically at the start/end of circular route)
+                # Check for overlap at the end of outbound and start of inbound
+                overlap_count = 0
+                min_len = min(len(inbound_stops), len(outbound_stops))
+                
+                # Check overlap between end of outbound and start of inbound
+                for i in range(1, min_len + 1):
+                    if len(outbound_stops) >= i and len(inbound_stops) >= i:
+                        if outbound_stops[-i] == inbound_stops[i-1]:
+                            overlap_count = i
+                        else:
+                            break
+                
+                # Merge: outbound + inbound (excluding overlapping stops)
+                if overlap_count > 0:
+                    merged_stops = outbound_stops + inbound_stops[overlap_count:]
+                    if not silent:
+                        print(f"Route {route_id}: Merged {len(outbound_stops)} outbound + {len(inbound_stops)} inbound stops, removed {overlap_count} overlapping stops, result: {len(merged_stops)} stops")
+                else:
+                    # No overlap detected, just concatenate
+                    merged_stops = outbound_stops + inbound_stops
+                    if not silent:
+                        print(f"Route {route_id}: No overlap detected, concatenated {len(outbound_stops)} + {len(inbound_stops)} = {len(merged_stops)} stops")
+                
+                # Create merged sequence with outbound direction (since it's circular)
+                merged_sequence = {
+                    'route_id': route_id,
+                    'direction': 'outbound',  # Use outbound for circular routes
+                    'stop_ids': merged_stops
+                }
+                merged_circular_sequences.append(merged_sequence)
+                
+            elif 'outbound' in directions:
+                # Only outbound exists, use as-is
+                merged_circular_sequences.append(directions['outbound'])
+            elif 'inbound' in directions:
+                # Only inbound exists, convert to outbound for consistency
+                inbound_seq = directions['inbound'].copy()
+                inbound_seq['direction'] = 'outbound'
+                merged_circular_sequences.append(inbound_seq)
+    
+    # Combine regular and merged circular sequences
+    all_sequences = regular_sequences + merged_circular_sequences
+    if not silent:
+        print(f"Total sequences after circular route processing: {len(all_sequences)}")
+
+    # Expand the stop_ids list into individual rows
+    expanded_sequences = []
+    for row_dict in all_sequences:
+        for seq, stop_id in enumerate(row_dict['stop_ids'], 1):
+            expanded_sequences.append({
+                'route_id': row_dict['route_id'],
+                'direction': row_dict['direction'],
+                'stop_id': stop_id,
+                'sequence': seq
+            })
+
+    sequences_df = pd.DataFrame(expanded_sequences)
+    sequences_df['unique_route_id'] = sequences_df['route_id'] + '-' + sequences_df['direction']
+    sequences_df.to_sql('citybus_stop_sequences', engine, if_exists='replace', index=False)
+    if not silent:
+        print(f"Loaded {len(sequences_df)} records into 'citybus_stop_sequences' table.")
+
+    # Process routes table with circular route handling
+    # Create a new route_directions_df based on the processed sequences
+    processed_route_directions = []
+    for seq_dict in all_sequences:
+        processed_route_directions.append({
+            'route_id': seq_dict['route_id'],
+            'direction': seq_dict['direction']
+        })
+    
+    processed_route_directions_df = pd.DataFrame(processed_route_directions).drop_duplicates()
+    
+    # Merge with route info
+    routes_df = pd.merge(
+        routes_info_df,
+        processed_route_directions_df,
+        left_on='route',
+        right_on='route_id'
+    )
+
+    # For circular routes, ensure we use consistent origin/destination
+    for route_id in circular_routes:
+        route_mask = routes_df['route'] == route_id
+        if route_mask.any():
+            # For circular routes, keep the original outbound origin/destination
+            # and append "(Circular)" to destination if not already present
+            dest_cols = ['dest_en', 'dest_tc', 'dest_sc']
+            for col in dest_cols:
+                if col in routes_df.columns:
+                    current_dest = str(routes_df.loc[route_mask, col].iloc[0])
+                    if 'circular' not in current_dest.lower() and current_dest != 'nan':
+                        routes_df.loc[route_mask, col] = current_dest + ' (Circular)'
+
+    # For non-circular routes, swap origin and destination for inbound routes
+    non_circular_inbound_mask = (routes_df['direction'] == 'inbound') & (~routes_df['route'].isin(circular_routes))
     orig_cols = ['orig_en', 'orig_tc', 'orig_sc']
     dest_cols = ['dest_en', 'dest_tc', 'dest_sc']
 
-    # Use .copy() to avoid SettingWithCopyWarning
-    routes_df.loc[inbound_mask, orig_cols + dest_cols] = routes_df.loc[inbound_mask, dest_cols + orig_cols].values
+    if non_circular_inbound_mask.any():
+        # Use .copy() to avoid SettingWithCopyWarning
+        routes_df.loc[non_circular_inbound_mask, orig_cols + dest_cols] = routes_df.loc[non_circular_inbound_mask, dest_cols + orig_cols].values
 
     routes_df['unique_route_id'] = routes_df['route'] + '-' + routes_df['direction']
     routes_df.to_sql('citybus_routes', engine, if_exists='replace', index=False)
@@ -233,26 +378,6 @@ def process_and_load_citybus_data(raw_routes: list, raw_stop_details: list, raw_
     stops_gdf.to_postgis('citybus_stops', engine, if_exists='replace', index=False)
     if not silent:
         print(f"Loaded {len(stops_gdf)} records into spatial table 'citybus_stops'.")
-
-    if not silent:
-        print("Processing Citybus route-stop sequences...")
-    route_stops_df = pd.DataFrame(raw_route_sequences)
-    # Expand the stop_ids list into individual rows
-    expanded_sequences = []
-    for _, row in route_stops_df.iterrows():
-        for seq, stop_id in enumerate(row['stop_ids'], 1):
-            expanded_sequences.append({
-                'route_id': row['route_id'],
-                'direction': row['direction'],
-                'stop_id': stop_id,
-                'sequence': seq
-            })
-
-    sequences_df = pd.DataFrame(expanded_sequences)
-    sequences_df['unique_route_id'] = sequences_df['route_id'] + '-' + sequences_df['direction']
-    sequences_df.to_sql('citybus_stop_sequences', engine, if_exists='replace', index=False)
-    if not silent:
-        print(f"Loaded {len(sequences_df)} records into 'citybus_stop_sequences' table.")
 
 def process_and_load_nlb_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine, silent=False):
     if not all([raw_routes, raw_stops, raw_route_stops]):
@@ -289,9 +414,10 @@ def process_and_load_nlb_data(raw_routes: list, raw_stops: list, raw_route_stops
         print(f"Loaded {len(route_stops_df)} records into 'nlb_stop_sequences' table.")
 
 def process_and_load_gov_gtfs_data(raw_frequencies: list, raw_trips: list, raw_routes: list,
-                                   raw_calendar: list, raw_calendar_dates: list, raw_fares: dict, engine: Engine, silent=False):
+                                   raw_calendar: list, raw_calendar_dates: list, raw_fares: dict, 
+                                   raw_stops: list, raw_stop_times: list, engine: Engine, silent=False):
     """Process and load Government GTFS data into the database."""
-    if not any([raw_frequencies, raw_trips, raw_routes, raw_calendar, raw_fares]):
+    if not any([raw_frequencies, raw_trips, raw_routes, raw_calendar, raw_fares, raw_stops, raw_stop_times]):
         if not silent:
             print("All Government GTFS raw data lists are empty. Aborting Government GTFS data processing.")
         return
@@ -319,6 +445,31 @@ def process_and_load_gov_gtfs_data(raw_frequencies: list, raw_trips: list, raw_r
         routes_df.to_sql('gov_gtfs_routes', engine, if_exists='replace', index=False)
         if not silent:
             print(f"Loaded {len(routes_df)} records into 'gov_gtfs_routes' table.")
+
+    if raw_stops:
+        if not silent:
+            print("Processing Government GTFS stops...")
+        stops_df = pd.DataFrame(raw_stops)
+        # Convert to spatial data if lat/lon columns exist
+        if 'stop_lat' in stops_df.columns and 'stop_lon' in stops_df.columns:
+            stops_gdf = gpd.GeoDataFrame(
+                stops_df,
+                geometry=gpd.points_from_xy(stops_df.stop_lon, stops_df.stop_lat),
+                crs="EPSG:4326"
+            )
+            stops_gdf.to_postgis('gov_gtfs_stops', engine, if_exists='replace', index=False)
+        else:
+            stops_df.to_sql('gov_gtfs_stops', engine, if_exists='replace', index=False)
+        if not silent:
+            print(f"Loaded {len(stops_df)} records into 'gov_gtfs_stops' table.")
+
+    if raw_stop_times:
+        if not silent:
+            print("Processing Government GTFS stop_times...")
+        stop_times_df = pd.DataFrame(raw_stop_times)
+        stop_times_df.to_sql('gov_gtfs_stop_times', engine, if_exists='replace', index=False)
+        if not silent:
+            print(f"Loaded {len(stop_times_df)} records into 'gov_gtfs_stop_times' table.")
 
     if raw_calendar:
         if not silent:

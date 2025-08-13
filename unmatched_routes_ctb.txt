@@ -1,0 +1,35 @@
+UNMATCHED ROUTES ANALYSIS FOR CTB
+==================================================
+
+Total CTB routes: 2
+Total government GTFS routes: 6
+Successful route matches: 2
+Total service patterns matched: 4
+Unmatched CTB routes: 0
+Unmatched government routes: 0
+
+MATCHED CTB ROUTES (with service patterns):
+--------------------------------------------------
+Route Key: 1-I-1
+  Service 1: ID 287, Stop diff: 0, Gov Route: 1480
+  Service 2: ID 288, Stop diff: 0, Gov Route: 1480
+  Service 3: ID 448, Stop diff: 0, Gov Route: 1480
+
+Route Key: 1-O-1
+  Service 1: ID 448, Stop diff: 1, Gov Route: 1000326
+
+
+==================================================
+
+UNMATCHED CTB ROUTES:
+------------------------------
+
+==================================================
+
+UNMATCHED GOVERNMENT GTFS ROUTES:
+-----------------------------------
+
+==================================================
+POTENTIAL MATCHING ISSUES ANALYSIS:
+----------------------------------------
+
