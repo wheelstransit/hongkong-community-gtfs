@@ -44,7 +44,7 @@ This project uses data from OpenStreetMap. The data is available under the Open 
 *   **(C) OpenStreetMap contributors**
 *   For more information on OSM's copyright and license, please visit [https://www.openstreetmap.org/copyright](https://www.openstreetmap.org/copyright).
 
-### 2. HKSAR Government's DATA.GOV.HK
+### 2. HKSAR Government's [DATA.GOV.HK](https://data.gov.hk)
 
 This project uses datasets from the Hong Kong Special Administrative Region Government's public sector information portal, `data.gov.hk`.
 
@@ -52,6 +52,10 @@ This project uses datasets from the Hong Kong Special Administrative Region Gove
 *   We acknowledge that the intellectual property rights in the data obtained from `data.gov.hk` are owned by the Government of the HKSAR.
 *   Use of this data is subject to the "Terms and Conditions of Use" as published on [https://data.gov.hk](https://data.gov.hk).
 
-### 3. hkbus/hk-bus-crawling
+### 3. [hkbus/hk-bus-crawling](https://github.com/hkbus/hk-bus-crawling)
 
 A quite large portion of the code was taken indirectly from `hkbus/hk-bus-crawling`.
+
+### 4. [HK-Bus-ETA/hk-bus-time-between-stops](https://github.com/HK-Bus-ETA/hk-bus-time-between-stops)
+
+Journey time data (i.e. stop_times.txt) are generated from data generated with this code.

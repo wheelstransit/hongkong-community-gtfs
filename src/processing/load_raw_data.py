@@ -3,6 +3,7 @@ import geopandas as gpd
 from sqlalchemy.engine import Engine
 from shapely import wkt
 import re
+from .mtrbus_station_merging import unify_mtrbus_stops
 
 def process_and_load_kmb_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine, silent=False):
     if not all([raw_routes, raw_stops, raw_route_stops]):
@@ -106,11 +107,35 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     if not silent:
         print("Processing GMB route-stop sequences...")
     route_stops_df = pd.DataFrame(raw_route_stops)
+    # Filter to main variant only if variant descriptions present
+    if {'variant_description_en','variant_description_tc','variant_description_sc'}.issubset(route_stops_df.columns):
+        mask_normal = (
+            route_stops_df['variant_description_en'].fillna('').str.lower().str.contains('normal') |
+            route_stops_df['variant_description_tc'].fillna('').str.contains('正常') |
+            route_stops_df['variant_description_sc'].fillna('').str.contains('正常')
+        )
+        pre_filter_count = len(route_stops_df)
+        route_stops_df = route_stops_df[mask_normal].copy()
+        if not silent:
+            print(f"Filtered variants: kept {len(route_stops_df)}/{pre_filter_count} rows as main variant")
+    # Deduplicate exact duplicates and conflicting sequence rows
+    pre_dedupe = len(route_stops_df)
+    route_stops_df.sort_values(['route_id','route_seq','sequence','stop_id'], inplace=True)
+    route_stops_df = route_stops_df.drop_duplicates(subset=['route_id','route_seq','sequence','stop_id'], keep='first')
+    # Also ensure only one stop per (route_id, route_seq, sequence)
+    route_stops_df = route_stops_df.drop_duplicates(subset=['route_id','route_seq','sequence'], keep='first')
+    if not silent:
+        print(f"Deduped route-stop rows: {pre_dedupe} -> {len(route_stops_df)}")
+    # Keep only columns we care about
+    wanted_cols = [
+        'route_id','route_seq','region','route_code','stop_id','sequence',
+        'stop_name_en','stop_name_tc','stop_name_sc'
+    ]
+    existing_cols = [c for c in wanted_cols if c in route_stops_df.columns]
+    route_stops_df = route_stops_df[existing_cols]
     route_stops_df.to_sql('gmb_stop_sequences', engine, if_exists='replace', index=False)
     if not silent:
         print(f"Loaded {len(route_stops_df)} records into 'gmb_stop_sequences' table.")
-
-from .mtrbus_station_merging import unify_mtrbus_stops
 
 def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_stops: list, raw_fares: list, engine: Engine, silent=False):
     if not all([raw_routes, raw_stops, raw_route_stops]):

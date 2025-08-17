@@ -13,7 +13,7 @@ def lat_long_dist(lat1, lon1, lat2, lon2):
     r = 6371
     return c * r * 1000
 
-def generate_shapes_from_csdi_files(output_path, silent=False):
+def generate_shapes_from_csdi_files(output_path, engine, silent=False, gov_route_ids=None):
     waypoints_dir = "waypoints"
     if not os.path.exists(waypoints_dir):
         if not silent:
@@ -22,6 +22,8 @@ def generate_shapes_from_csdi_files(output_path, silent=False):
 
     shape_info_list = []
     files_to_process = [f for f in os.listdir(waypoints_dir) if f.endswith('.json') and f != '0versions.json']
+    if gov_route_ids:
+        files_to_process = [f for f in files_to_process if f.split('-')[0] in gov_route_ids]
     
     with open(output_path, 'w') as f_out:
         f_out.write("shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled\n")
@@ -75,7 +77,17 @@ def generate_shapes_from_csdi_files(output_path, silent=False):
                 'bound': bound
             })
 
-    return True, shape_info_list
+    gov_route_ids_in_shapes = [str(s['gov_route_id']) for s in shape_info_list]
+    gov_routes_df = pd.read_sql(f"SELECT route_id, agency_id FROM gov_gtfs_routes WHERE route_id IN ({','.join(gov_route_ids_in_shapes)})", engine)
+    gov_routes_df['route_id'] = gov_routes_df['route_id'].astype(str)
+
+    shape_info_df = pd.DataFrame(shape_info_list)
+    shape_info_df['gov_route_id'] = shape_info_df['gov_route_id'].astype(str)
+
+    shape_info_df = shape_info_df.merge(gov_routes_df, left_on='gov_route_id', right_on='route_id', how='left')
+    shape_info_df.drop(columns=['route_id'], inplace=True)
+
+    return True, shape_info_df.to_dict('records')
 
 def match_trips_to_csdi_shapes(trips_df, shape_info, engine, silent=False):
     if not shape_info:
@@ -86,8 +98,6 @@ def match_trips_to_csdi_shapes(trips_df, shape_info, engine, silent=False):
 
     shape_info_df = pd.DataFrame(shape_info)
 
-    # If trips already have gov_route_id from the matcher, use it directly for most trips
-    # This eliminates the need for complex double matching
     if 'gov_route_id' in trips_df.columns:
         trips_with_gov_route = trips_df[trips_df['gov_route_id'].notna()].copy()
         trips_without_gov_route = trips_df[trips_df['gov_route_id'].isna()].copy()
@@ -96,45 +106,65 @@ def match_trips_to_csdi_shapes(trips_df, shape_info, engine, silent=False):
             if not silent:
                 print(f"Using direct gov_route_id matching for {len(trips_with_gov_route)} trips...")
             
-            # Parse direction from direction_id if available, otherwise from trip_id
             if 'direction_id' not in trips_with_gov_route.columns:
-                # Fallback: extract from trip_id if direction_id missing
                 trips_with_gov_route['direction_id'] = trips_with_gov_route['trip_id'].str.contains('-I-').astype(int)
             
             trips_with_gov_route['bound'] = trips_with_gov_route['direction_id'].apply(lambda x: 'I' if x == 1 else 'O')
             
-            # Convert data types for matching
             trips_with_gov_route['gov_route_id'] = pd.to_numeric(trips_with_gov_route['gov_route_id'], errors='coerce').astype('Int64').astype(str)
             shape_info_df['gov_route_id'] = pd.to_numeric(shape_info_df['gov_route_id'], errors='coerce').astype('Int64').astype(str)
-            
-            # Direct matching using gov_route_id + bound
+
             trips_direct_matched = trips_with_gov_route.merge(
-                shape_info_df[['gov_route_id', 'bound', 'shape_id']],
+                shape_info_df[['gov_route_id', 'bound', 'shape_id', 'agency_id']],
                 on=['gov_route_id', 'bound'],
-                how='left'
+                how='left',
+                suffixes=('', '_shape')
             )
-            
-            # Validate and auto-correct inverted shapes for non-circular routes
+
             if not silent:
-                print("Validating shape directions by comparing start/end stops...")
-            trips_direct_matched = _validate_and_correct_shape_directions(
-                trips_direct_matched, engine, silent
-            )
-            
-            if not silent:
-                direct_matched_count = trips_direct_matched['shape_id'].notna().sum()
-                print(f"Direct matching: {direct_matched_count} out of {len(trips_direct_matched)} trips matched to shapes.")
+                print("DEBUG: Matched KMB route 10 trips:")
+                print(trips_direct_matched[(trips_direct_matched['route_short_name'] == '10') & (trips_direct_matched['agency_id'] == 'KMB')][['agency_id', 'gov_route_id', 'bound', 'shape_id']].head())
+                print("DEBUG: Matched CTB route 10 trips:")
+                print(trips_direct_matched[(trips_direct_matched['route_short_name'] == '10') & (trips_direct_matched['agency_id'] == 'CTB')][['agency_id', 'gov_route_id', 'bound', 'shape_id']].head())
+
+            agency_mapping = {
+                'KMB': ['KMB', 'LWB', 'KMB+CTB', 'KWB'],
+                'CTB': ['CTB', 'NWFB', 'KMB+CTB'],
+                'GMB': ['GMB'],
+                'MTRB': ['LRTFeeder'],
+                'NLB': ['NLB']
+            }
+
+            def is_agency_match(row):
+                if pd.isna(row['agency_id_shape']):
+                    return True
+                trip_agency = row['agency_id']
+                shape_agency = row['agency_id_shape']
                 
-                # Debug output for route 98 specifically
-                route_98_trips = trips_direct_matched[trips_direct_matched['route_short_name'] == '98']
-                if not route_98_trips.empty:
-                    print("Route 98 direct shape assignments:")
-                    for _, trip in route_98_trips.iterrows():
-                        print(f"  Trip {trip['trip_id']}: gov_route_id={trip['gov_route_id']}, bound={trip['bound']}, shape_id={trip.get('shape_id', 'NO_MATCH')}")
+                valid_agencies = agency_mapping.get(trip_agency, [trip_agency])
+                
+                return shape_agency in valid_agencies
+
+            trips_direct_matched = trips_direct_matched[trips_direct_matched.apply(is_agency_match, axis=1)]
+            
+            if not silent:
+                print("DEBUG: Matched KMB route 10 trips after filtering:")
+                print(trips_direct_matched[(trips_direct_matched['route_short_name'] == '10') & (trips_direct_matched['agency_id'] == 'KMB')][['agency_id', 'gov_route_id', 'bound', 'shape_id']].head())
+
+            if not trips_direct_matched.empty:
+                if not silent:
+                    print("Validating shape directions by comparing start/end stops...")
+                trips_direct_matched = _validate_and_correct_shape_directions(
+                    trips_direct_matched, engine, silent
+                )
+            
+                if not silent:
+                    direct_matched_count = trips_direct_matched['shape_id'].notna().sum()
+                    print(f"Direct matching: {direct_matched_count} out of {len(trips_direct_matched)} trips matched to shapes.")
+
         else:
             trips_direct_matched = pd.DataFrame()
         
-        # For trips without gov_route_id, fall back to the complex matching
         if not trips_without_gov_route.empty:
             if not silent:
                 print(f"Using fallback matching for {len(trips_without_gov_route)} trips without gov_route_id...")
@@ -142,7 +172,6 @@ def match_trips_to_csdi_shapes(trips_df, shape_info, engine, silent=False):
         else:
             trips_fallback_matched = pd.DataFrame()
         
-        # Combine results
         if not trips_direct_matched.empty and not trips_fallback_matched.empty:
             final_trips = pd.concat([trips_direct_matched, trips_fallback_matched], ignore_index=True)
         elif not trips_direct_matched.empty:
@@ -160,7 +189,6 @@ def match_trips_to_csdi_shapes(trips_df, shape_info, engine, silent=False):
         
         return final_trips
     
-    # If no gov_route_id column, fall back to the old complex matching
     return _fallback_shape_matching(trips_df, shape_info_df, engine, silent)
 
 def _fallback_shape_matching(trips_df, shape_info_df, engine, silent=False):
@@ -176,7 +204,7 @@ def _fallback_shape_matching(trips_df, shape_info_df, engine, silent=False):
     gov_df['direction_id'] = (parsed_direction == 2).astype(int)
     gov_df['bound'] = gov_df['direction_id'].apply(lambda x: 'I' if x == 1 else 'O')
 
-    # Create a mapping from our trip_id to the government's route_id
+    # create a mapping from our trip_id to the government's route_id
     # For agencies like CTB where each direction is a separate route_id in government GTFS,
     # we should match directly on gov_route_id when available
     
@@ -390,7 +418,7 @@ def _validate_and_correct_shape_directions(trips_df, engine, silent=False):
             corrected_shape_file = f"waypoints/{gov_route_id}-{opposite_bound}.json"
             if os.path.exists(corrected_shape_file):
                 # Apply the correction
-                mask = (trips_df['route_short_name'] == route_name) & (trips_df['direction_id'] == direction_id)
+                mask = (trips_df['route_short_name'] == route_name) & (trips_df['direction_id'] == direction_id) & (trips_df['agency_id'] == agency_id)
                 trips_df.loc[mask, 'shape_id'] = corrected_shape_id
                 corrections_made += 1
                 
@@ -531,3 +559,5 @@ def _should_correct_shape_direction(route_name, bound, gov_route_id, agency_id, 
         print(f"      Last stop: {last_stop['stop_name_en']}")
     
     return should_correct
+
+

@@ -119,6 +119,10 @@ class GMBClient:
             for route_code in route_codes:
                 tasks.append({'region': region, 'route_code': route_code})
 
+        # Track duplication stats
+        duplicate_exact = 0  # same (route_id, route_seq, stop_seq, stop_id)
+        duplicate_seq_conflict = 0  # same (route_id, route_seq, stop_seq) but different stop_id
+
         for task in tqdm(tasks, desc="Processing routes", disable=silent):
             region = task['region']
             route_code = task['route_code']
@@ -130,6 +134,16 @@ class GMBClient:
                 route_id = route_variant.get('route_id')
                 if not route_id:
                     continue
+                # Extract descriptions to filter only the "Normal" variant
+                desc_en = (route_variant.get('description_en') or '').strip()
+                desc_tc = (route_variant.get('description_tc') or '').strip()
+                desc_sc = (route_variant.get('description_sc') or '').strip()
+                if not (
+                    ('normal' in desc_en.lower()) or
+                    ('正常' in desc_tc) or
+                    ('正常' in desc_sc)
+                ):
+                    continue
 
                 for direction in route_variant.get('directions', []):
                     route_seq = direction.get('route_seq')
@@ -140,11 +154,27 @@ class GMBClient:
                     if not route_stops_data or 'route_stops' not in route_stops_data:
                         continue
 
+                    # Sets to enforce uniqueness
+                    seen_full_keys = set()  # (route_id, route_seq, stop_seq, stop_id)
+                    chosen_seq_stop = {}     # (route_id, route_seq, stop_seq) -> stop_id
+
                     for stop_info in route_stops_data['route_stops']:
                         stop_id = stop_info.get('stop_id')
-                        if not stop_id:
+                        stop_seq = stop_info.get('stop_seq')
+                        if not stop_id or stop_seq is None:
                             continue
-
+                        full_key = (route_id, route_seq, stop_seq, stop_id)
+                        if full_key in seen_full_keys:
+                            duplicate_exact += 1
+                            continue
+                        seq_key = (route_id, route_seq, stop_seq)
+                        if seq_key in chosen_seq_stop and chosen_seq_stop[seq_key] != stop_id:
+                            # Conflict: multiple stop_ids share same sequence; keep first
+                            duplicate_seq_conflict += 1
+                            continue
+                        # Record
+                        seen_full_keys.add(full_key)
+                        chosen_seq_stop.setdefault(seq_key, stop_id)
                         unique_stop_ids.add(stop_id)
                         all_route_stops.append({
                             'route_id': route_id,
@@ -152,22 +182,23 @@ class GMBClient:
                             'region': region,
                             'route_code': route_code,
                             'stop_id': stop_id,
-                            'sequence': stop_info.get('stop_seq'),
+                            'sequence': stop_seq,
                             'stop_name_en': stop_info.get('name_en'),
                             'stop_name_tc': stop_info.get('name_tc'),
                             'stop_name_sc': stop_info.get('name_sc'),
+                            'variant_description_en': desc_en,
+                            'variant_description_tc': desc_tc,
+                            'variant_description_sc': desc_sc,
                         })
 
         if not silent:
-            print(f"\nfound {len(all_route_stops)} route-stop records.")
+            print(f"\nDedup stats: exact dup rows skipped={duplicate_exact}, conflicting sequence choices skipped={duplicate_seq_conflict}")
+            print(f"found {len(all_route_stops)} route-stop records.")
             print(f"found {len(unique_stop_ids)} unique stops to fetch details for.")
-
-            # phase 2
             print(f"\nfetching details for {len(unique_stop_ids)} unique stops (multithreaded)")
         all_stops_details = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_stop = {executor.submit(self.get_stop_details, stop_id): stop_id for stop_id in unique_stop_ids}
-
             progress_bar = tqdm(concurrent.futures.as_completed(future_to_stop), total=len(unique_stop_ids), desc="Fetching stop details", disable=silent)
             for future in progress_bar:
                 stop_details = future.result()

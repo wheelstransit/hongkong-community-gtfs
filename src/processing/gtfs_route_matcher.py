@@ -14,10 +14,12 @@ This approach is much more reliable than geographic matching since
 government GTFS uses the same route naming as operators, just with
 different service type handling.
 """
-
-import pandas as pd
 from typing import List, Tuple, Dict, Optional
 from sqlalchemy.engine import Engine
+import pandas as pd
+from fuzzywuzzy import process
+from .shapes import lat_long_dist  # Import distance calculation function
+import os
 
 # Agency mapping from operator names to government GTFS agency IDs
 AGENCY_MAPPING = {
@@ -93,77 +95,38 @@ def get_operator_route_stop_counts(engine: Engine, operator_name: str) -> pd.Dat
             GROUP BY k.route, k.bound, k.service_type, k.orig_en, k.dest_en
         """
     elif operator_name == 'CTB':
-        # For CTB, handle circular routes by using government GTFS stop counts
         query = f"""
-            WITH route_stops AS (
-                SELECT 
-                    cr.route,
-                    cr.direction,
-                    cr.orig_en,
-                    cr.dest_en,
-                    COUNT(css.sequence) as stop_count,
-                    cr.unique_route_id
-                FROM citybus_routes cr 
-                JOIN citybus_stop_sequences css ON cr.unique_route_id = css.unique_route_id
-                GROUP BY cr.route, cr.direction, cr.orig_en, cr.dest_en, cr.unique_route_id
-            ),
-            circular_routes_raw AS (
-                -- First, detect circular routes and get stop counts per route_id
-                SELECT 
-                    gr.route_short_name as route,
-                    COUNT(DISTINCT gst.stop_sequence) as gov_stop_count
-                FROM gov_gtfs_routes gr
-                JOIN gov_gtfs_trips gt ON gr.route_id = gt.route_id
-                JOIN gov_gtfs_stop_times gst ON gt.trip_id = gst.trip_id
-                WHERE gr.agency_id = 'CTB'
-                GROUP BY gr.route_short_name, gr.route_id
-                HAVING COUNT(DISTINCT CASE WHEN SPLIT_PART(gt.trip_id, '-', 2) = '2' THEN 1 END) = 0
-            ),
-            circular_routes AS (
-                -- Then, get average stop count per route (in case of multiple route_ids)
-                SELECT 
-                    route,
-                    ROUND(AVG(gov_stop_count))::int as avg_gov_stop_count
-                FROM circular_routes_raw
-                GROUP BY route
-            )
             SELECT 
-                rs.route,
+                cr.route,
                 CASE 
-                    WHEN rs.route IN (SELECT route FROM circular_routes) THEN 'O'  -- Circular routes: outbound only
-                    WHEN rs.direction = 'outbound' THEN 'O' 
-                    WHEN rs.direction = 'inbound' THEN 'I'
-                    ELSE rs.direction 
+                    WHEN cr.direction = 'outbound' THEN 'O' 
+                    WHEN cr.direction = 'inbound' THEN 'I'
+                    ELSE cr.direction 
                 END as bound,
                 '1' as service_type,
-                rs.orig_en,
-                rs.dest_en,
-                CASE 
-                    WHEN rs.route IN (SELECT route FROM circular_routes) THEN 
-                        (SELECT avg_gov_stop_count FROM circular_routes WHERE route = rs.route)  -- Use government GTFS count for circular
-                    ELSE rs.stop_count
-                END as stop_count,
-                rs.route || '-' || CASE 
-                    WHEN rs.route IN (SELECT route FROM circular_routes) THEN 'O'
-                    WHEN rs.direction = 'outbound' THEN 'O' 
-                    WHEN rs.direction = 'inbound' THEN 'I'
-                    ELSE rs.direction 
+                cr.orig_en,
+                cr.dest_en,
+                COUNT(css.sequence) as stop_count,
+                cr.route || '-' || CASE 
+                    WHEN cr.direction = 'outbound' THEN 'O' 
+                    WHEN cr.direction = 'inbound' THEN 'I'
+                    ELSE cr.direction 
                 END || '-1' as route_key
-            FROM route_stops rs
-            WHERE rs.route NOT IN (SELECT route FROM circular_routes)  -- Regular routes: both directions
-                OR (rs.route IN (SELECT route FROM circular_routes) AND rs.direction = 'outbound')  -- Circular: outbound only
+            FROM citybus_routes cr 
+            JOIN citybus_stop_sequences css ON cr.unique_route_id = css.unique_route_id
+            GROUP BY cr.route, cr.direction, cr.orig_en, cr.dest_en, cr.unique_route_id
         """
     elif operator_name == 'GMB':
-        # GMB has different structure - route_code is the route number
+        # GMB has different structure - route_code is the route number, region matters!
         query = """
             SELECT 
-                gr.route_code as route,
+                gr.region || '-' || gr.route_code as route,
                 'O' as bound,  -- GMB doesn't have clear direction info
                 '1' as service_type,
                 '' as orig_en,
                 '' as dest_en,
                 COUNT(gss.sequence) as stop_count,
-                gr.route_code || '-O-1' as route_key
+                gr.region || '-' || gr.route_code || '-O-1' as route_key
             FROM gmb_routes gr 
             JOIN gmb_stop_sequences gss ON gr.route_code = gss.route_code 
                 AND gr.region = gss.region
@@ -187,16 +150,30 @@ def get_operator_route_stop_counts(engine: Engine, operator_name: str) -> pd.Dat
         query = """
             SELECT 
                 nr."routeNo" as route,
-                'O' as bound,  -- NLB structure needs investigation
-                '1' as service_type,
-                '' as orig_en,
-                '' as dest_en,
-                COUNT(nss.sequence) as stop_count,
-                nr."routeNo" || '-O-1' as route_key
+                nr."routeName_e" as route_name,
+                nr."routeId" as routeid,
+                COUNT(nss.sequence) as stop_count
             FROM nlb_routes nr 
             JOIN nlb_stop_sequences nss ON nr."routeId" = nss."routeId"
-            GROUP BY nr."routeNo"
+            GROUP BY nr."routeNo", nr."routeName_e", nr."routeId"
         """
+        df = pd.read_sql(query, engine)
+        df[['origin', 'destination']] = df['route_name'].str.split(' > ', expand=True)
+        
+        routes = []
+        for route_no, group in df.groupby('route'):
+            if len(group) == 2:
+                r1 = group.iloc[0]
+                r2 = group.iloc[1]
+                if r1['origin'] == r2['destination'] and r1['destination'] == r2['origin']:
+                    routes.append({'route': route_no, 'bound': 'O', 'service_type': '1', 'stop_count': r1['stop_count'], 'route_key': f"{route_no}-O-1", 'routeid': r1['routeid']})
+                    routes.append({'route': route_no, 'bound': 'I', 'service_type': '1', 'stop_count': r2['stop_count'], 'route_key': f"{route_no}-I-1", 'routeid': r2['routeid']})
+                else:
+                    routes.append({'route': route_no, 'bound': 'O', 'service_type': '1', 'stop_count': r1['stop_count'], 'route_key': f"{route_no}-O-1", 'routeid': r1['routeid']})
+            else:
+                for _, r in group.iterrows():
+                    routes.append({'route': route_no, 'bound': 'O', 'service_type': '1', 'stop_count': r['stop_count'], 'route_key': f"{route_no}-O-1", 'routeid': r['routeid']})
+        return pd.DataFrame(routes)
     else:
         raise ValueError(f"Unsupported operator: {operator_name}")
     
@@ -230,7 +207,7 @@ def get_government_gtfs_route_stop_counts(engine: Engine, route_numbers: List[st
             gr.agency_id,
             gt.service_id,
             CASE WHEN SPLIT_PART(gt.trip_id, '-', 2) = '1' THEN 'O' 
-                 WHEN SPLIT_PART(gt.trip_id, '-', 2) = '2' THEN 'I'
+                 WHEN SPLIT_PART(gt.trip_id, '-', 2) = '2' THEN 'I' 
                  ELSE 'UNKNOWN' END as bound,
             COUNT(DISTINCT gst.stop_sequence) as stop_count
         FROM gov_gtfs_routes gr
@@ -246,6 +223,7 @@ def get_government_gtfs_route_stop_counts(engine: Engine, route_numbers: List[st
 
 def find_best_matches(operator_routes: pd.DataFrame, 
                      gov_routes: pd.DataFrame,
+                     engine: Engine, # Add engine for db access
                      max_stop_diff: int = 10,
                      operator_name: str = None) -> Dict[str, List[Dict]]:
     """
@@ -254,6 +232,7 @@ def find_best_matches(operator_routes: pd.DataFrame,
     Args:
         operator_routes: DataFrame with operator route stop counts
         gov_routes: DataFrame with government GTFS route stop counts
+        engine: Database engine
         max_stop_diff: Maximum allowed stop count difference
         operator_name: Name of the operator to prioritize matching
         
@@ -283,14 +262,18 @@ def find_best_matches(operator_routes: pd.DataFrame,
                            unit="routes"):
         for _, gov_route in gov_routes.iterrows():
             # Only match if route number and direction match
-            if (op_route['route'] == gov_route['route_short_name'] and 
-                op_route['bound'] == gov_route['bound']):
-                
+            if (op_route['route'] == gov_route['route_short_name']):
+                # Enforce bound alignment for KMB to guarantee O=1 and I=2 mapping
+                if operator_name == 'KMB' and op_route.get('bound') != gov_route.get('bound'):
+                    continue
+                # Skip special route variants for better matching
+                route_long_name = str(gov_route.get('route_long_name', ''))
+                if any(keyword in route_long_name.upper() for keyword in ['VIA', 'OMIT', 'SPECIAL', 'EXPRESS', 'SERVICE', 'CORRECTIONAL', 'HOSPITAL', 'SCHOOL']):
+                    continue
                 stop_diff = abs(op_route['stop_count'] - gov_route['stop_count'])
-                
                 if stop_diff <= max_stop_diff:
                     if gov_route['agency_id'] in valid_agencies:
-                        potential_matches.append({
+                        match_record = {
                             'route_key': op_route['route_key'],
                             'operator_route': op_route['route'],
                             'operator_bound': op_route['bound'],
@@ -304,7 +287,11 @@ def find_best_matches(operator_routes: pd.DataFrame,
                             'gov_service_id': gov_route['service_id'],
                             'stop_diff': stop_diff,
                             'gov_route_long_name': gov_route.get('route_long_name', '')
-                        })
+                        }
+                        # Preserve operator routeid for NLB (used later in export)
+                        if 'routeid' in op_route.index:
+                            match_record['routeid'] = op_route['routeid']
+                        potential_matches.append(match_record)
     
     # Group by route_key and keep only the best matches (lowest stop_diff) for each route
     if potential_matches:
@@ -312,22 +299,33 @@ def find_best_matches(operator_routes: pd.DataFrame,
     
     potential_matches.sort(key=lambda x: (x['route_key'], x['stop_diff'], x['gov_service_id']))
     
-    current_route_key = None
-    best_stop_diff = None
-    
+    # Group by route_key and keep all service patterns for the best stop_diff
+    best_matches_by_route = {}
     for match in potential_matches:
         route_key = match['route_key']
-        
-        # Starting a new route_key
-        if route_key != current_route_key:
-            current_route_key = route_key
-            best_stop_diff = match['stop_diff']
-            matches[route_key] = []
-        
-        # Only keep matches with the same (best) stop_diff for this route
-        if match['stop_diff'] == best_stop_diff:
-            matches[route_key].append(match)
-    
+        if route_key not in best_matches_by_route or match['stop_diff'] < best_matches_by_route[route_key][0]['stop_diff']:
+            best_matches_by_route[route_key] = [match]
+        elif match['stop_diff'] == best_matches_by_route[route_key][0]['stop_diff']:
+            best_matches_by_route[route_key].append(match)
+
+    # Keep ALL service patterns for each route_key at the best stop_diff
+    for route_key, route_matches in best_matches_by_route.items():
+        matches[route_key] = route_matches  # Keep all service patterns, not just the first
+
+    # NLB specific dedupe: keep only one gov_route_id per route_key (direction)
+    if operator_name == 'NLB':
+        deduped = {}
+        for rk, rm_list in matches.items():
+            # Group by gov_route_id
+            by_route_id = {}
+            for m in rm_list:
+                by_route_id.setdefault(m['gov_route_id'], []).append(m)
+            # Rank: most service patterns, then lowest avg stop_diff, then lowest gov_route_id
+            ranked = sorted(by_route_id.items(), key=lambda x: (-len(x[1]), sum(mm['stop_diff'] for mm in x[1]) / len(x[1]), x[0]))
+            # Keep only top group's matches
+            deduped[rk] = ranked[0][1]
+        matches = deduped
+
     return matches
 
 def _output_unmatched_routes(operator_routes: pd.DataFrame, 
@@ -358,8 +356,10 @@ def _output_unmatched_routes(operator_routes: pd.DataFrame,
     
     filename = f"unmatched_routes_{operator_name.lower()}.txt"
     
-    # Count total service patterns matched
+    # Count total matches and service patterns
+    total_matches = len(matches)
     total_service_patterns = sum(len(service_list) for service_list in matches.values())
+    unique_routes_matched = len(set(match['operator_route'] for match_list in matches.values() for match in match_list))
     
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(f"UNMATCHED ROUTES ANALYSIS FOR {operator_name}\n")
@@ -368,7 +368,7 @@ def _output_unmatched_routes(operator_routes: pd.DataFrame,
         # Summary
         f.write(f"Total {operator_name} routes: {len(operator_routes)}\n")
         f.write(f"Total government GTFS routes: {len(gov_routes)}\n") 
-        f.write(f"Successful route matches: {len(matches)}\n")
+        f.write(f"Successful route matches: {unique_routes_matched} unique route(s) with {total_matches} direction matches\n")
         f.write(f"Total service patterns matched: {total_service_patterns}\n")
         f.write(f"Unmatched {operator_name} routes: {len(unmatched_operator)}\n")
         f.write(f"Unmatched government routes: {len(unmatched_gov)}\n\n")
@@ -429,7 +429,422 @@ def _output_unmatched_routes(operator_routes: pd.DataFrame,
                 f.write("\n")
     
     print(f"Unmatched routes analysis written to: {filename}")
-    print(f"Matched {len(matches)} routes with {total_service_patterns} total service patterns")
+    print(f"Matched {unique_routes_matched} unique route(s) with {total_matches} direction matches and {total_service_patterns} service patterns")
+
+def get_government_gtfs_route_info_for_ctb(engine: Engine, route_numbers: List[str], agency_ids: List[str]) -> pd.DataFrame:
+    """
+    Get stop counts and direction info for government GTFS routes.
+    """
+    if not route_numbers or not agency_ids:
+        return pd.DataFrame()
+    
+    route_list = "','".join(route_numbers)
+    agency_list = "','".join(agency_ids)
+    
+    query = f"""
+        SELECT 
+            gr.route_id,
+            gr.route_short_name,
+            SPLIT_PART(gt.trip_id, '-', 2) as direction,
+            COUNT(gst.stop_id) as stop_count
+        FROM gov_gtfs_routes gr
+        JOIN gov_gtfs_trips gt ON gr.route_id = gt.route_id
+        JOIN gov_gtfs_stop_times gst ON gt.trip_id = gst.trip_id
+        WHERE gr.route_short_name IN ('{route_list}')
+            AND gr.agency_id IN ('{agency_list}')
+        GROUP BY gr.route_id, gr.route_short_name, direction
+    """
+    
+    df = pd.read_sql(query, engine)
+    
+    # Calculate directions and average stop counts
+    gov_route_info = {}
+    for route_id, group in df.groupby('route_id'):
+        directions = group['direction'].unique()
+        if '1' in directions and '2' in directions:
+            is_bidirectional = True
+        else:
+            is_bidirectional = False
+        
+        gov_route_info[route_id] = {
+            'route_short_name': group['route_short_name'].iloc[0],
+            'is_bidirectional': is_bidirectional,
+            'avg_stop_count_outbound': group[group['direction'] == '1']['stop_count'].mean(),
+            'avg_stop_count_inbound': group[group['direction'] == '2']['stop_count'].mean()
+        }
+        
+    return pd.DataFrame.from_dict(gov_route_info, orient='index')
+
+def find_best_match_for_ctb_route(operator_route_variants: pd.DataFrame, gov_routes: pd.DataFrame) -> Optional[str]:
+    """
+    Finds the best government GTFS route match for a single operator route.
+    """
+    op_outbound = operator_route_variants[operator_route_variants['bound'] == 'O']
+    op_inbound = operator_route_variants[operator_route_variants['bound'] == 'I']
+
+    if op_outbound.empty or op_inbound.empty:
+        return None # Requires both directions
+
+    op_stop_count_outbound = op_outbound['stop_count'].iloc[0]
+    op_stop_count_inbound = op_inbound['stop_count'].iloc[0]
+
+    best_match = None
+    min_diff = float('inf')
+
+    for gov_route_id, gov_route in gov_routes.iterrows():
+        if not gov_route['is_bidirectional']:
+            continue
+
+        diff_outbound = abs(op_stop_count_outbound - gov_route['avg_stop_count_outbound'])
+        diff_inbound = abs(op_stop_count_inbound - gov_route['avg_stop_count_inbound'])
+        total_diff = diff_outbound + diff_inbound
+
+        if total_diff < min_diff:
+            min_diff = total_diff
+            best_match = gov_route_id
+            
+    return str(best_match) if best_match is not None else None
+
+def get_government_gtfs_route_info_for_nlb(engine: Engine, route_numbers: List[str], agency_ids: List[str]) -> pd.DataFrame:
+    """
+    Get stop counts and direction info for government GTFS routes.
+    """
+    if not route_numbers or not agency_ids:
+        return pd.DataFrame()
+    
+    route_list = "','".join(route_numbers)
+    agency_list = "','".join(agency_ids)
+    
+    query = f"""
+        SELECT 
+            gr.route_id,
+            gr.route_short_name,
+            gr.route_long_name,
+            SPLIT_PART(gt.trip_id, '-', 2) as direction,
+            COUNT(gst.stop_id) as stop_count
+        FROM gov_gtfs_routes gr
+        JOIN gov_gtfs_trips gt ON gr.route_id = gt.route_id
+        JOIN gov_gtfs_stop_times gst ON gt.trip_id = gst.trip_id
+        WHERE gr.route_short_name IN ('{route_list}')
+            AND gr.agency_id IN ('{agency_list}')
+        GROUP BY gr.route_id, gr.route_short_name, gr.route_long_name, direction
+    """
+    
+    df = pd.read_sql(query, engine)
+    
+    # Calculate directions and average stop counts
+    gov_route_info = {}
+    for route_id, group in df.groupby('route_id'):
+        directions = group['direction'].unique()
+        if '1' in directions and '2' in directions:
+            is_bidirectional = True
+        else:
+            is_bidirectional = False
+        
+        gov_route_info[route_id] = {
+            'route_short_name': group['route_short_name'].iloc[0],
+            'route_long_name': group['route_long_name'].iloc[0],
+            'is_bidirectional': is_bidirectional,
+            'avg_stop_count_outbound': group[group['direction'] == '1']['stop_count'].mean(),
+            'avg_stop_count_inbound': group[group['direction'] == '2']['stop_count'].mean()
+        }
+        
+    return pd.DataFrame.from_dict(gov_route_info, orient='index')
+
+def find_best_match_for_nlb_route(operator_route_variants: pd.DataFrame, gov_routes: pd.DataFrame, engine: Engine) -> Optional[str]:
+    """
+    Finds the best government GTFS route match for a single operator route.
+    """
+    op_outbound = operator_route_variants[operator_routeVariants['bound'] == 'O']
+    op_inbound = operator_route_variants[operator_routeVariants['bound'] == 'I']
+
+    if op_outbound.empty or op_inbound.empty:
+        return None # Requires both directions
+
+    op_stop_count_outbound = op_outbound['stop_count'].iloc[0]
+    op_stop_count_inbound = op_inbound['stop_count'].iloc[0]
+
+    best_match = None
+    min_diff = float('inf')
+
+    for gov_route_id, gov_route in gov_routes.iterrows():
+        if not gov_route['is_bidirectional']:
+            continue
+
+        # Get operator stop list
+        op_stops_outbound_query = f"""
+            SELECT ns."stopName_e" 
+            FROM nlb_stop_sequences nss 
+            JOIN nlb_stops ns ON nss."stopId"::int = ns."stopId"::int 
+            WHERE nss."routeId"::int = {op_outbound['routeid'].iloc[0]} 
+            ORDER BY nss.sequence
+        """
+        op_stops_inbound_query = f"""
+            SELECT ns."stopName_e" 
+            FROM nlb_stop_sequences nss 
+            JOIN nlb_stops ns ON nss."stopId"::int = ns."stopId"::int 
+            WHERE nss."routeId"::int = {op_inbound['routeid'].iloc[0]} 
+            ORDER BY nss.sequence
+        """
+        op_stops_outbound = pd.read_sql(op_stops_outbound_query, engine)['stopName_e'].tolist()
+        op_stops_inbound = pd.read_sql(op_stops_inbound_query, engine)['stopName_e'].tolist()
+
+        # Get gov stop list
+        gov_stops_outbound_query = f"""
+            SELECT s.stop_name 
+            FROM gov_gtfs_stop_times st 
+            JOIN gov_gtfs_stops s ON st.stop_id = s.stop_id 
+            WHERE st.trip_id = (
+                SELECT trip_id 
+                FROM gov_gtfs_trips 
+                WHERE route_id = '{gov_route_id}' AND trip_id LIKE '%-%1-%' 
+                LIMIT 1
+            ) 
+            ORDER BY st.stop_sequence
+        """
+        gov_stops_inbound_query = f"""
+            SELECT s.stop_name 
+            FROM gov_gtfs_stop_times st 
+            JOIN gov_gtfs_stops s ON st.stop_id = s.stop_id 
+            WHERE st.trip_id = (
+                SELECT trip_id 
+                FROM gov_gtfs_trips 
+                WHERE route_id = '{gov_route_id}' AND trip_id LIKE '%-%2-%' 
+                LIMIT 1
+            ) 
+            ORDER BY st.stop_sequence
+        """
+        
+        try:
+            gov_stops_outbound = pd.read_sql(gov_stops_outbound_query, engine)['stop_name'].str.replace('[NLB] ', '', regex=False).tolist()
+            gov_stops_inbound = pd.read_sql(gov_stops_inbound_query, engine)['stop_name'].str.replace('[NLB] ', '', regex=False).tolist()
+        except Exception:
+            # Skip this government route if query fails
+            continue
+
+        # Fuzzy match scores
+        score_outbound = 0
+        for stop in op_stops_outbound:
+            match = process.extractOne(stop, gov_stops_outbound)
+            if match:
+                score_outbound += match[1]
+        avg_score_outbound = score_outbound / len(op_stops_outbound) if op_stops_outbound else 0
+
+        score_inbound = 0
+        for stop in op_stops_inbound:
+            match = process.extractOne(stop, gov_stops_inbound)
+            if match:
+                score_inbound += match[1]
+        avg_score_inbound = score_inbound / len(op_stops_inbound) if op_stops_inbound else 0
+
+        # Combine scores and penalties
+        total_diff = (100 - avg_score_outbound) + (100 - avg_score_inbound)
+        total_diff += abs(op_stop_count_outbound - len(gov_stops_outbound)) + abs(op_stop_count_inbound - len(gov_stops_inbound))
+
+        route_long_name = gov_route.get('route_long_name', '')
+        if route_long_name and ('VIA' in route_long_name.upper() or 
+           'OMIT' in route_long_name.upper() or 
+           'SPECIAL' in route_long_name.upper()):
+            total_diff += 100 # Increased penalty
+
+        if total_diff < min_diff:
+            min_diff = total_diff
+            best_match = gov_route_id
+            
+    return str(best_match) if best_match is not None else None
+
+
+
+def match_ctb_routes_to_government_gtfs(
+    engine: Engine,
+    operator_name: str,
+    route_filter: List[str] = None,
+    debug: bool = False
+) -> Dict[str, str]:
+    """
+    Main function to match operator routes to government GTFS routes.
+    """
+    if debug:
+        print(f"Matching {operator_name} routes to government GTFS...")
+
+    operator_routes = get_operator_route_stop_counts(engine, operator_name)
+    if route_filter:
+        operator_routes = operator_routes[operator_routes['route'].isin(route_filter)]
+
+    route_numbers = operator_routes['route'].unique().tolist()
+    gov_agency_ids = AGENCY_MAPPING.get(operator_name, [])
+    
+    gov_routes_info = get_government_gtfs_route_info_for_ctb(engine, route_numbers, gov_agency_ids)
+
+    matches = {}
+    for route_num, group in operator_routes.groupby('route'):
+        gov_candidates = gov_routes_info[gov_routes_info['route_short_name'] == route_num]
+        best_match_id = find_best_match_for_ctb_route(group, gov_candidates)
+        if best_match_id:
+            matches[route_num] = best_match_id
+            if debug and os.environ.get('VERBOSE_MATCH') == '1':
+                print(f"Matched route {route_num} to {best_match_id}")
+
+    return matches
+
+def match_nlb_routes_to_government_gtfs(
+    engine: Engine,
+    operator_name: str,
+    route_filter: List[str] = None,
+    debug: bool = False
+) -> Dict[str, str]:
+    """
+    Main function to match operator routes to government GTFS routes.
+    """
+    if debug:
+        print(f"Matching {operator_name} routes to government GTFS...")
+
+    operator_routes = get_operator_route_stop_counts(engine, operator_name)
+    if route_filter:
+        operator_routes = operator_routes[operator_routes['route'].isin(route_filter)]
+
+    route_numbers = operator_routes['route'].unique().tolist()
+    gov_agency_ids = AGENCY_MAPPING.get(operator_name, [])
+    
+    gov_routes_info = get_government_gtfs_route_info_for_nlb(engine, route_numbers, gov_agency_ids)
+
+    matches = {}
+    for route_num, group in operator_routes.groupby('route'):
+        gov_candidates = gov_routes_info[gov_routes_info['route_short_name'] == route_num]
+        best_match_id = find_best_match_for_nlb_route(group, gov_candidates, engine)
+        if best_match_id:
+            matches[route_num] = best_match_id
+            if debug and os.environ.get('VERBOSE_MATCH') == '1':
+                print(f"Matched route {route_num} to {best_match_id}")
+
+    return matches
+
+def match_gmb_routes_by_first_stop_location(
+    engine: Engine,
+    operator_name: str,
+    route_filter: List[str] = None,
+    debug: bool = False,
+    max_distance_meters: float = 500.0
+) -> Dict[str, List[Dict]]:
+    """
+    Match GMB routes to government GTFS routes based on first stop location proximity.
+    
+    This handles the regional separation (HKI-1 vs NT-1) by matching each regional route
+    to the government route with the closest first stop location.
+    NOTE: Previously this function incorrectly hard‑coded the route_key to outbound (O) only,
+    collapsing both directions and causing only one bound to appear in trips.txt and mixing
+    stop sequences across regions. We now preserve the bound derived from route_seq (1=O, 2=I).
+    """
+    if debug:
+        print(f"Matching {operator_name} routes to government GTFS by first stop location...")
+
+    # Get operator routes with first stop locations for each direction
+    operator_query = """
+        SELECT 
+            gr.region || '-' || gr.route_code as route,
+            gr.region,
+            gr.route_code,
+            gss.route_seq,
+            gr.region || '-' || gr.route_code || '-' || 
+                CASE WHEN gss.route_seq = 1 THEN 'O' ELSE 'I' END || '-1' as route_key,
+            ST_X(gs.geometry) as first_stop_lng,
+            ST_Y(gs.geometry) as first_stop_lat,
+            gs.stop_name_en as first_stop_name
+        FROM gmb_routes gr 
+        JOIN gmb_stop_sequences gss ON gr.route_code = gss.route_code AND gr.region = gss.region
+        JOIN gmb_stops gs ON gss.stop_id = gs.stop_id
+        WHERE gss.sequence = 1
+    """
+    
+    if route_filter:
+        # Extract base route numbers from regional routes (HKI-1 -> 1)
+        base_routes = [r.split('-')[-1] if '-' in r else r for r in route_filter]
+        route_filter_str = "', '".join(base_routes)
+        operator_query += f" AND gr.route_code IN ('{route_filter_str}')"
+    
+    operator_routes = pd.read_sql(operator_query, engine)
+    
+    if operator_routes.empty:
+        if debug:
+            print("No operator routes found")
+        return {}
+
+    # Get government GMB routes with first stop locations
+    gov_query = """
+        SELECT 
+            gr.route_id,
+            gr.route_short_name,
+            gr.route_long_name,
+            gr.agency_id,
+            ST_X(gs.geometry) as first_stop_lng,
+            ST_Y(gs.geometry) as first_stop_lat,
+            gs.stop_name as first_stop_name,
+            gt.service_id as gov_service_id
+        FROM gov_gtfs_routes gr
+        JOIN gov_gtfs_trips gt ON gr.route_id = gt.route_id
+        JOIN gov_gtfs_stop_times gst ON gt.trip_id = gst.trip_id AND gst.stop_sequence = 1
+        JOIN gov_gtfs_stops gs ON gst.stop_id = gs.stop_id
+        WHERE gr.agency_id = 'GMB'
+    """
+    
+    gov_routes = pd.read_sql(gov_query, engine)
+    
+    # Filter out special route variants
+    if not gov_routes.empty:
+        gov_routes = gov_routes[~gov_routes['route_long_name'].str.upper().str.contains(
+            'VIA|OMIT|SPECIAL|EXPRESS|SERVICE|CORRECTIONAL|HOSPITAL|SCHOOL', na=False)]
+    
+    if gov_routes.empty:
+        if debug:
+            print("No government GMB routes found")
+        return {}
+
+    matches: Dict[str, List[Dict]] = {}
+
+    for _, op_route in operator_routes.iterrows():
+        route_code = op_route['route_code']
+        region = op_route['region']
+        route_seq = int(op_route['route_seq']) if pd.notna(op_route['route_seq']) else 1
+        bound = 'O' if route_seq == 1 else 'I'
+        route_key = f"{region}-{route_code}-{bound}-1"  # preserve direction now
+        
+        gov_candidates = gov_routes[gov_routes['route_short_name'] == route_code]
+        
+        if gov_candidates.empty:
+            if debug:
+                print(f"No government routes found for route {region}-{route_code} ({bound})")
+            continue
+        
+        best_match = None
+        min_distance = float('inf')
+        
+        for _, gov_route in gov_candidates.iterrows():
+            distance = lat_long_dist(
+                op_route['first_stop_lat'], op_route['first_stop_lng'],
+                gov_route['first_stop_lat'], gov_route['first_stop_lng']
+            )
+            if distance < min_distance and distance <= max_distance_meters:
+                min_distance = distance
+                best_match = gov_route
+        
+        if best_match is not None:
+            if route_key not in matches:
+                matches[route_key] = []
+            matches[route_key].append({
+                'gov_route_id': best_match['route_id'],
+                'gov_service_id': best_match['gov_service_id'],
+                'distance_meters': min_distance,
+                'operator_first_stop': op_route['first_stop_name'],
+                'gov_first_stop': best_match['first_stop_name'],
+                'bound': bound
+            })
+            if debug and os.environ.get('VERBOSE_MATCH') == '1':
+                print(f"Matched {region}-{route_code} {bound} to {best_match['route_id']} (distance: {min_distance:.1f}m)")
+        else:
+            if debug and os.environ.get('VERBOSE_MATCH') == '1':
+                print(f"No close match within {max_distance_meters}m for {region}-{route_code} {bound} (closest {min_distance:.1f}m)")
+
+    return matches
 
 def match_operator_routes_to_government_gtfs(
     engine: Engine,
@@ -450,6 +865,13 @@ def match_operator_routes_to_government_gtfs(
         Dictionary mapping route_key to list of service matches
     """
     
+    if operator_name == 'CTB':
+        return match_ctb_routes_to_government_gtfs(engine, operator_name, route_filter, debug)
+
+    if operator_name == 'GMB':
+        # Use location-based matching for GMB to handle regional routes properly
+        return match_gmb_routes_by_first_stop_location(engine, operator_name, route_filter, debug)
+
     if debug:
         print(f"Matching {operator_name} routes to government GTFS...")
     
@@ -500,11 +922,13 @@ def match_operator_routes_to_government_gtfs(
         return {}
     
     # Find best matches
-    matches = find_best_matches(operator_routes, gov_routes, operator_name=operator_name)
+    matches = find_best_matches(operator_routes, gov_routes, engine, operator_name=operator_name)
     
+    total_matches = len(matches)
     total_service_patterns = sum(len(service_list) for service_list in matches.values())
+    unique_routes_matched = len(set(match['operator_route'] for match_list in matches.values() for match in match_list))
     if debug:
-        print(f"Found {len(matches)} route matches with {total_service_patterns} total service patterns")
+        print(f"Found {unique_routes_matched} unique route(s) with {total_matches} direction matches and {total_service_patterns} service patterns")
     
     # Output unmatched routes to file for analysis
     _output_unmatched_routes(operator_routes, gov_routes, matches, operator_name)
@@ -593,66 +1017,3 @@ def match_operator_routes_with_coop_fallback(
             route_filter=route_filter,
             debug=debug
         )
-
-# Legacy function stubs for compatibility
-def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Legacy function - no longer used."""
-    return 0.0
-
-def calculate_route_name_similarity(operator_origin: str, operator_dest: str, gov_route_name: str) -> float:
-    """Legacy function - no longer used."""
-    return 0.0
-
-def match_stops_by_dp(operator_stops: List[Dict], gtfs_stops: List[Dict], 
-                     debug: bool = False, route_info: str = "") -> Tuple[List[Tuple[int, int]], float]:
-    """Legacy function - no longer used."""
-    return [], 0.0
-
-def find_matching_government_routes(
-    operator_route_stops: List[Dict],
-    government_routes_data: pd.DataFrame,
-    government_stops_data: pd.DataFrame,
-    government_stop_times_data: pd.DataFrame,
-    government_trips_data: pd.DataFrame,
-    route_number: str,
-    direction_id: int,
-    operator_origin: str = "",
-    operator_dest: str = "",
-    operator_name: str = "KMB",
-    debug: bool = False
-) -> List[Dict]:
-    """
-    Legacy function - replaced by new stop-count based matching.
-    
-    This function is kept for compatibility but should not be used.
-    Use match_operator_routes_to_government_gtfs instead.
-    """
-    if debug:
-        print("Warning: find_matching_government_routes is deprecated")
-        print("Use match_operator_routes_to_government_gtfs instead")
-    
-    return []
-
-def get_best_government_route_matches(
-    operator_routes_data: pd.DataFrame,
-    operator_stops_data: pd.DataFrame, 
-    operator_stop_sequences_data: pd.DataFrame,
-    government_routes_data: pd.DataFrame,
-    government_stops_data: pd.DataFrame,
-    government_stop_times_data: pd.DataFrame,
-    government_trips_data: pd.DataFrame,
-    operator_name: str = "KMB",
-    max_matches_per_route: int = 1,
-    debug: bool = False
-) -> Dict[str, List[Dict]]:
-    """
-    Legacy function - replaced by new stop-count based matching.
-    
-    This function is kept for compatibility but should not be used.
-    Use match_operator_routes_to_government_gtfs instead.
-    """
-    if debug:
-        print("Warning: get_best_government_route_matches is deprecated")
-        print("Use match_operator_routes_to_government_gtfs instead")
-    
-    return {}

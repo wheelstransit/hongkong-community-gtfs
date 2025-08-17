@@ -53,7 +53,7 @@ def generate_stop_times_for_agency_optimized(
     elif agency_id == 'CTB':
         pattern_key_cols = ['unique_route_id']
     elif agency_id == 'GMB':
-        pattern_key_cols = ['route_code', 'route_seq']
+        pattern_key_cols = ['route_code', 'route_seq', 'region']  # add region
     elif agency_id == 'MTRB':
         pattern_key_cols = ['route_id', 'direction']
     elif agency_id == 'NLB':
@@ -84,8 +84,9 @@ def generate_stop_times_for_agency_optimized(
             original_from_stops = unified_to_original_map.get(from_stop_id, [from_stop_id])
             original_to_stops = unified_to_original_map.get(to_stop_id, [to_stop_id])
 
-            original_from_stops_unprefixed = [s.split('-', 1)[1] if '-' in s else s for s in original_from_stops]
-            original_to_stops_unprefixed = [s.split('-', 1)[1] if '-' in s else s for s in original_to_stops]
+            # Convert to strings and handle potential prefixes  
+            original_from_stops_unprefixed = [str(s).split('-', 1)[1] if '-' in str(s) else str(s) for s in original_from_stops]
+            original_to_stops_unprefixed = [str(s).split('-', 1)[1] if '-' in str(s) else str(s) for s in original_to_stops]
 
             found_time = None
             for from_orig in original_from_stops_unprefixed:
@@ -117,7 +118,7 @@ def generate_stop_times_for_agency_optimized(
         elif agency_id == 'CTB':
             pattern_lookup_key = trip_row.unique_route_id
         elif agency_id == 'GMB':
-            pattern_lookup_key = (trip_row.route_code, trip_row.route_seq)
+            pattern_lookup_key = (trip_row.route_code, trip_row.route_seq, trip_row.region)  # include region
         elif agency_id == 'MTRB':
             direction_str = 'O' if trip_row.direction_id == 0 else 'I'
             pattern_lookup_key = (trip_row.route_short_name, direction_str)

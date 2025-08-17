@@ -16,3 +16,4 @@ httpx
 fuzzywuzzy
 python-Levenshtein
 fiona
+pytest

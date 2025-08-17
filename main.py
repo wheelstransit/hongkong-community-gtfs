@@ -29,11 +29,14 @@ from src.ingest.waypoints_client import fetch_csdi_waypoints_data
 
 cache_dir = ".cache"
 
-def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, force_ingest_gov_gtfs=False, *args, **kwargs):
+def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, force_ingest_gov_gtfs=False, force_ingest_gmb=False, *args, **kwargs):
     if force_ingest_osm and 'osm' in cache_key:
         force_ingest = True
     
     if force_ingest_gov_gtfs and ('gov_' in cache_key or 'gov-' in cache_key):
+        force_ingest = True
+
+    if force_ingest_gmb and ('gmb_' in cache_key or 'gmb-' in cache_key or cache_key.startswith('gmb')):
         force_ingest = True
 
     cache_file = os.path.join(cache_dir, f"{cache_key}.pkl")
@@ -60,6 +63,8 @@ def main():
     parser.add_argument('--force-ingest-osm', action='store_true', help='force re-ingestion of osm data, ignoring cache')
     parser.add_argument('--force-ingest-waypoints', action='store_true', help='force re-ingestion of waypoints data, ignoring cache')
     parser.add_argument('--force-ingest-gov-gtfs', action='store_true', help='force re-ingestion of government GTFS data, ignoring cache')
+    parser.add_argument('--force-ingest-gmb', action='store_true', help='force re-ingestion of gmb data, ignoring cache')  # NEW
+    parser.add_argument('--no-regenerate-shapes', action='store_true', help='do not regenerate shapes if they already exist')
     args = parser.parse_args()
 
     if not os.path.exists(cache_dir):
@@ -96,8 +101,14 @@ def main():
 
     # gmb
     gmb_client_instance = gmb_client.GMBClient(silent=args.silent)
-    raw_gmb_routes = fetch_or_load_from_cache("gmb_routes", gmb_client_instance.get_all_routes, args.force_ingest)
-    gmb_stops_data = fetch_or_load_from_cache("gmb_stops_and_route_stops", gmb_client_instance.get_all_stops_and_route_stops, args.force_ingest, silent=args.silent)
+    raw_gmb_routes = fetch_or_load_from_cache(
+        "gmb_routes", gmb_client_instance.get_all_routes, args.force_ingest,
+        force_ingest_gmb=args.force_ingest_gmb
+    )
+    gmb_stops_data = fetch_or_load_from_cache(
+        "gmb_stops_and_route_stops", gmb_client_instance.get_all_stops_and_route_stops, args.force_ingest,
+        force_ingest_gmb=args.force_ingest_gmb, silent=args.silent
+    )
     raw_gmb_stops, raw_gmb_route_stops = gmb_stops_data if gmb_stops_data else ([], [])
     if not args.silent:
         print(f"gmb data - routes: {len(raw_gmb_routes) if raw_gmb_routes else 0}, stops: {len(raw_gmb_stops) if raw_gmb_stops else 0}, route-stops: {len(raw_gmb_route_stops) if raw_gmb_route_stops else 0}")
@@ -238,7 +249,8 @@ def main():
         journey_time_data=raw_journey_time_data,
         mtr_headway_data=raw_mtr_headway,
         osm_data=raw_osm_data,
-        silent=args.silent
+        silent=args.silent,
+        no_regenerate_shapes=args.no_regenerate_shapes
     )
 
     if not args.silent:
