@@ -1,45 +1,26 @@
 """
-GTFS Route Matching Module
-
-This module implements a robust stop-count-based matching algorithm 
-for matching operator routes with government GTFS routes.
-
-The matching algorithm works by:
-1. Normalizing direction encoding (O/I vs 1/2 in trip_id)
-2. Matching by route number, direction, and operator agency
-3. Ranking matches by stop count similarity (closest match wins)
-4. Handling complex agency mappings in government GTFS
-
-This approach is much more reliable than geographic matching since
-government GTFS uses the same route naming as operators, just with
-different service type handling.
+steps
+1 normalizing direction encoding (O/I vs 1/2 in trip_id)
+2 matching by route number, direction, and operator agency
+3 ranking matches by stop count similarity (closest match wins)
+4 handling complex agency mappings in government GTFS
 """
 from typing import List, Tuple, Dict, Optional
 from sqlalchemy.engine import Engine
 import pandas as pd
 from fuzzywuzzy import process
-from .shapes import lat_long_dist  # Import distance calculation function
+from .shapes import lat_long_dist
 import os
 
-# Agency mapping from operator names to government GTFS agency IDs
 AGENCY_MAPPING = {
     'KMB': ['KMB', 'LWB', 'KMB+CTB', 'KWB'],
     'CTB': ['CTB'], 
     'GMB': ['GMB'],
-    'MTRB': ['LRTFeeder'],  # MTR Bus appears as LRTFeeder in government GTFS
+    'MTRB': ['LRTFeeder'],
     'NLB': ['NLB']
 }
 
 def normalize_direction(direction: str) -> str:
-    """
-    Normalize direction strings to O/I format.
-    
-    Args:
-        direction: Direction string ('outbound', 'inbound', 'O', 'I', '1', '2')
-        
-    Returns:
-        Normalized direction ('O' for outbound, 'I' for inbound)
-    """
     direction = str(direction).lower().strip()
     if direction in ['outbound', 'o', '1']:
         return 'O'
@@ -49,17 +30,6 @@ def normalize_direction(direction: str) -> str:
         return direction.upper()
 
 def extract_direction_from_trip_id(trip_id: str) -> str:
-    """
-    Extract direction from government GTFS trip_id.
-    Trip IDs follow pattern: route_id-direction-service-time
-    Direction 1 = outbound (O), Direction 2 = inbound (I)
-    
-    Args:
-        trip_id: Government GTFS trip ID
-        
-    Returns:
-        Direction ('O' or 'I')
-    """
     try:
         direction_part = trip_id.split('-')[1]
         return 'O' if direction_part == '1' else 'I'
@@ -67,16 +37,6 @@ def extract_direction_from_trip_id(trip_id: str) -> str:
         return 'UNKNOWN'
 
 def get_operator_route_stop_counts(engine: Engine, operator_name: str) -> pd.DataFrame:
-    """
-    Get stop counts for all operator routes by route/bound/service_type.
-    
-    Args:
-        engine: Database engine
-        operator_name: Operator name ('KMB', 'CTB', 'GMB', 'MTRB', 'NLB')
-        
-    Returns:
-        DataFrame with columns: route, bound, service_type, stop_count, route_key
-    """
     
     if operator_name == 'KMB':
         query = """
@@ -181,17 +141,6 @@ def get_operator_route_stop_counts(engine: Engine, operator_name: str) -> pd.Dat
 
 def get_government_gtfs_route_stop_counts(engine: Engine, route_numbers: List[str], 
                                          agency_ids: List[str]) -> pd.DataFrame:
-    """
-    Get stop counts for government GTFS routes with service information.
-    
-    Args:
-        engine: Database engine
-        route_numbers: List of route numbers to match
-        agency_ids: List of agency IDs to filter by
-        
-    Returns:
-        DataFrame with gov route info, service patterns, and stop counts by direction
-    """
     
     if not route_numbers or not agency_ids:
         return pd.DataFrame()
@@ -226,24 +175,12 @@ def find_best_matches(operator_routes: pd.DataFrame,
                      engine: Engine, # Add engine for db access
                      max_stop_diff: int = 10,
                      operator_name: str = None) -> Dict[str, List[Dict]]:
-    """
-    Find best matches between operator routes and government GTFS routes.
     
-    Args:
-        operator_routes: DataFrame with operator route stop counts
-        gov_routes: DataFrame with government GTFS route stop counts
-        engine: Database engine
-        max_stop_diff: Maximum allowed stop count difference
-        operator_name: Name of the operator to prioritize matching
-        
-    Returns:
-        Dictionary mapping route_key to list of best service matches only
-    """
+    #Find best matches between operator routes and government GTFS routes.
     from tqdm import tqdm
     
     matches = {}
     
-    # Create all potential matches
     potential_matches = []
     
     same_agency_map = {
@@ -255,7 +192,6 @@ def find_best_matches(operator_routes: pd.DataFrame,
     }
     valid_agencies = same_agency_map.get(operator_name, [operator_name])
 
-    # Use tqdm to show progress bar for route matching
     for _, op_route in tqdm(operator_routes.iterrows(), 
                            total=len(operator_routes), 
                            desc="Finding route matches", 
@@ -332,15 +268,6 @@ def _output_unmatched_routes(operator_routes: pd.DataFrame,
                             gov_routes: pd.DataFrame, 
                             matches: Dict[str, List[Dict]], 
                             operator_name: str) -> None:
-    """
-    Output unmatched routes to a text file for analysis.
-    
-    Args:
-        operator_routes: DataFrame with operator route stop counts
-        gov_routes: DataFrame with government GTFS route stop counts  
-        matches: Dictionary of successful matches (now list of services per route)
-        operator_name: Name of the operator (for filename)
-    """
     matched_operator_keys = set(matches.keys())
     # Flatten all matched government route IDs from all service patterns
     matched_gov_route_ids = set()
@@ -941,20 +868,6 @@ def match_operator_routes_with_coop_fallback(
     route_filter: List[str] = None,
     debug: bool = False
 ) -> Dict[str, List[Dict]]:
-    """
-    Enhanced matching function that handles co-op routes by preferring KMB matching.
-    For CTB routes that are operated jointly with KMB (agency_id = 'KMB+CTB'), 
-    use KMB route data instead of CTB data for better accuracy.
-    
-    Args:
-        engine: Database engine
-        operator_name: Operator name ('KMB', 'CTB', 'GMB', 'MTRB', 'NLB')
-        route_filter: Optional list of route numbers to filter by
-        debug: Enable debug output
-        
-    Returns:
-        Dictionary mapping route_key to list of service matches
-    """
     
     # For CTB, check for co-op routes and use KMB data where applicable
     if operator_name == 'CTB':
@@ -1010,7 +923,6 @@ def match_operator_routes_with_coop_fallback(
         return ctb_matches
     
     else:
-        # For non-CTB operators, use standard matching
         return match_operator_routes_to_government_gtfs(
             engine=engine,
             operator_name=operator_name,
