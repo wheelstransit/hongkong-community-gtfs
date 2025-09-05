@@ -17,3 +17,7 @@ fuzzywuzzy
 python-Levenshtein
 fiona
 pytest
+protobuf>=5.27.0
+gtfs-realtime-bindings>=1.0.0
+pydantic>=2.7.0
+python-dateutil>=2.9.0.post0

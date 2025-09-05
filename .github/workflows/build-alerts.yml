@@ -1,0 +1,84 @@
+name: Build GTFS-RT Alerts
+
+on:
+  push:
+    paths:
+      - 'src/realtime/**'
+      - 'data/rt/events/**'
+      - '.github/workflows/build-alerts.yml'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build alerts.pb
+        run: |
+          python -m src.realtime.build_alerts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alerts.pb
+          path: data/rt/build/alerts.pb
+
+  upload-s3:
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build alerts.pb
+        run: |
+          python -m src.realtime.build_alerts
+
+      - name: Configure AWS credentials
+        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_S3_BUCKET }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'ap-east-1' }}
+
+      - name: Upload to S3
+        if: ${{ secrets.AWS_ACCESS_KEY_ID && secrets.AWS_SECRET_ACCESS_KEY && secrets.AWS_S3_BUCKET }}
+        run: |
+          aws s3 cp data/rt/build/alerts.pb s3://${{ secrets.AWS_S3_BUCKET }}/alerts.pb --acl public-read --cache-control "public,max-age=60"
+
+      - name: Upload to Cloudflare R2
+        if: ${{ secrets.R2_ACCOUNT_ID && secrets.R2_ACCESS_KEY_ID && secrets.R2_SECRET_ACCESS_KEY && secrets.R2_BUCKET }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ format('https://{0}.r2.cloudflarestorage.com', secrets.R2_ACCOUNT_ID) }}
+        run: |
+          pip install awscli
+          aws --endpoint-url "$R2_ENDPOINT" s3 cp data/rt/build/alerts.pb s3://${{ secrets.R2_BUCKET }}/alerts.pb --acl public-read --cache-control "public,max-age=60"

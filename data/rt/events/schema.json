@@ -1,0 +1,145 @@
+{
+  "$defs": {
+    "EventType": {
+      "enum": [
+        "stop_moved",
+        "stop_closed",
+        "detour",
+        "modified_service",
+        "network_notice",
+        "accessibility_notice"
+      ],
+      "title": "EventType",
+      "type": "string"
+    }
+  },
+  "description": "Canonical alert event shape accepted from crowdsourcing.\n\n- id: deterministic, unique per alert (controls FeedEntity.id)\n- header/description/url: lang->text mappings (e.g., {\"en\": \"..\", \"zh\": \"..\"})\n- route_ids/stop_ids/trip_ids: scoping of the informed_entity\n- start/end: RFC3339 timestamps (with timezone) for active window\n- cause/effect: optional explicit GTFS-RT names; sensible defaults applied by generator\n- replacement_stop_id: hint for stop moved/closed scenarios",
+  "properties": {
+    "id": {
+      "description": "Stable unique ID for this alert",
+      "title": "Id",
+      "type": "string"
+    },
+    "type": {
+      "$ref": "#/$defs/EventType"
+    },
+    "header": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Header",
+      "type": "object"
+    },
+    "description": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Description",
+      "type": "object"
+    },
+    "url": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Url"
+    },
+    "route_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Route Ids",
+      "type": "array"
+    },
+    "stop_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Stop Ids",
+      "type": "array"
+    },
+    "trip_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Trip Ids",
+      "type": "array"
+    },
+    "start": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "RFC3339 timestamp with timezone",
+      "title": "Start"
+    },
+    "end": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "RFC3339 timestamp with timezone",
+      "title": "End"
+    },
+    "cause": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cause"
+    },
+    "effect": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effect"
+    },
+    "replacement_stop_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Replacement Stop Id"
+    }
+  },
+  "required": [
+    "id",
+    "type"
+  ],
+  "title": "Event",
+  "type": "object"
+}
