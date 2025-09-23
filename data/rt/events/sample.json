@@ -43,5 +43,39 @@
     "end": "2025-09-05T20:00:00+08:00",
     "cause": "CONSTRUCTION",
     "effect": "DETOUR"
+  },
+  {
+    "id": "jsttesting",
+    "type": "stop_closed",
+    "header": {"en": "Stop closed", "zh": "站點暫停服務"},
+    "description": {
+      "en": "Stop 67890 closed due to parade. Service resumes at 18:00.",
+      "zh": "因遊行，站點 67890 暫停服務，18:00 恢復。"
+    },
+    "route_ids": ["2", "2A"],
+    "stop_ids": ["67890"],
+    "start": "2025-09-05T14:00:00+08:00",
+    "end": "2025-09-05T18:00:00+08:00",
+    "cause": "DEMONSTRATION",
+    "effect": "NO_SERVICE"
+  },
+  {
+    "id": "evt-0004",
+    "type": "modified_service",
+    "header": {
+      "en": "Service Suspended",
+      "zh": "服務暫停"
+    },
+    "description": {
+      "en": "KMB route N281 service is suspended due to typhoon.",
+      "zh": "因颱風，九巴路線N281暫停服務。"
+    },
+    "route_ids": [
+      "KMB-N281"
+    ],
+    "start": "2025-09-23T18:00:00+08:00",
+    "end": "2025-09-24T06:00:00+08:00",
+    "cause": "WEATHER",
+    "effect": "NO_SERVICE"
   }
 ]
