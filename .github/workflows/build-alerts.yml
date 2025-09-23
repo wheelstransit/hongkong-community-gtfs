@@ -77,10 +77,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
-        run: |
-          aws s3 cp data/rt/build/alerts.pb "s3://${{ secrets.R2_BUCKET }}/alerts.pb" --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com" --acl public-read --cache-control "public,max-age=60"
-          aws s3 cp data/rt/build/hash.txt "s3://${{ secrets.R2_BUCKET }}/hash.txt" --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com" --acl public-read --cache-control "public,max-age=60"
           R2_ENDPOINT: ${{ format('https://{0}.r2.cloudflarestorage.com', secrets.R2_ACCOUNT_ID) }}
         run: |
-          pip install awscli
-          aws --endpoint-url "$R2_ENDPOINT" s3 cp data/rt/build/alerts.pb s3://${{ secrets.R2_BUCKET }}/alerts.pb --acl public-read --cache-control "public,max-age=60"
+          aws s3 cp data/rt/build/alerts.pb "s3://${{ secrets.R2_BUCKET }}/alerts.pb" --endpoint-url "$R2_ENDPOINT" --acl public-read --cache-control "public,max-age=60"
+          aws s3 cp data/rt/build/hash.txt "s3://${{ secrets.R2_BUCKET }}/hash.txt" --endpoint-url "$R2_ENDPOINT" --acl public-read --cache-control "public,max-age=60"
