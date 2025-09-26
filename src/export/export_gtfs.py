@@ -3,6 +3,7 @@ import geopandas as gpd
 from sqlalchemy.engine import Engine
 import os
 import zipfile
+from concurrent.futures import ProcessPoolExecutor
 from src.processing.stop_unification import unify_stops_by_name_and_distance
 from src.processing.stop_times import generate_stop_times_for_agency_optimized as generate_stop_times_for_agency
 from src.processing.shapes import generate_shapes_from_csdi_files, match_trips_to_csdi_shapes
@@ -77,6 +78,354 @@ def _hhmmss_to_seconds(timestr: str) -> Optional[int]:
 
 def _seconds_to_hhmmss(total_seconds: int) -> str:
     return format_timedelta(timedelta(seconds=int(total_seconds)))
+
+
+def _expand_stop_area_records(records):
+    rows = []
+    for rec in records:
+        area_id = rec.get('area_id')
+        stop_ids = rec.get('stop_ids') or []
+        if not area_id or not stop_ids:
+            continue
+        for stop_id in stop_ids:
+            rows.append({'area_id': area_id, 'stop_id': stop_id})
+    return rows
+
+
+def _build_stop_areas_df(stop_group: pd.DataFrame, enable_parallel: bool = True) -> pd.DataFrame:
+    if stop_group.empty:
+        return pd.DataFrame(columns=['area_id', 'stop_id'])
+
+    records = stop_group[['area_id', 'stop_ids']].to_dict('records')
+    if not records:
+        return pd.DataFrame(columns=['area_id', 'stop_id'])
+
+    should_parallelize = enable_parallel and len(records) > 500
+    if should_parallelize:
+        max_workers = min((os.cpu_count() or 1), 16)
+        if max_workers > 1:
+            chunk = max(1, math.ceil(len(records) / max_workers))
+            chunks = [records[i:i + chunk] for i in range(0, len(records), chunk)]
+            rows = []
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                for future in executor.map(_expand_stop_area_records, chunks):
+                    rows.extend(future)
+            return pd.DataFrame(rows, columns=['area_id', 'stop_id']) if rows else pd.DataFrame(columns=['area_id', 'stop_id'])
+
+    rows = _expand_stop_area_records(records)
+    return pd.DataFrame(rows, columns=['area_id', 'stop_id']) if rows else pd.DataFrame(columns=['area_id', 'stop_id'])
+
+
+def build_fares_v2(
+    engine: Engine,
+    final_output_dir: str,
+    final_trips_df: pd.DataFrame,
+    final_stop_times_df: pd.DataFrame,
+    final_routes_df: Optional[pd.DataFrame] = None,
+    silent: bool = False
+) -> None:
+    fare_query = """
+        WITH parsed AS (
+            SELECT
+                fr.route_id::text AS gov_route_id,
+                (split_part(fr.fare_id, '-', 2))::int AS direction_code,
+                (split_part(fr.fare_id, '-', 3))::int AS origin_sequence,
+                (split_part(fr.fare_id, '-', 4))::int AS dest_sequence,
+                fa.price::numeric AS price,
+                fa.currency_type
+            FROM gov_gtfs_fare_rules fr
+            JOIN gov_gtfs_fare_attributes fa USING (fare_id)
+        ), ranked AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY gov_route_id, direction_code, origin_sequence
+                       ORDER BY dest_sequence DESC, price DESC
+                   ) AS rn
+            FROM parsed
+        )
+        SELECT gov_route_id,
+               CASE WHEN direction_code = 2 THEN 1 ELSE 0 END AS direction_id,
+               origin_sequence,
+               price,
+               COALESCE(currency_type, 'HKD') AS currency_type
+        FROM ranked
+        WHERE rn = 1;
+    """
+
+    fares_base = pd.read_sql(fare_query, engine)
+    if fares_base.empty:
+        if not silent:
+            print("No government fares available; skipping GTFS Fares v2 export.")
+        return
+
+    route_dir_map = (
+        final_trips_df[['route_id', 'direction_id', 'gov_route_id']]
+        .dropna(subset=['route_id', 'direction_id', 'gov_route_id'])
+        .copy()
+    )
+    if route_dir_map.empty:
+        if not silent:
+            print("No unified trips with government route references; skipping fares export.")
+        return
+
+    route_dir_map['direction_id'] = route_dir_map['direction_id'].astype(int)
+    route_dir_map['gov_route_id'] = route_dir_map['gov_route_id'].astype(str)
+    route_dir_map['unified_route_id'] = route_dir_map['route_id'].astype(str)
+    route_dir_map = route_dir_map[['gov_route_id', 'direction_id', 'unified_route_id']].drop_duplicates()
+
+    fares_base['gov_route_id'] = fares_base['gov_route_id'].astype(str)
+    fares_base['direction_id'] = fares_base['direction_id'].astype(int)
+    fares_base['origin_sequence'] = fares_base['origin_sequence'].astype(int)
+    fares_base['price'] = fares_base['price'].astype(float)
+
+    merged = fares_base.merge(route_dir_map, on=['gov_route_id', 'direction_id'], how='inner')
+    if merged.empty:
+        if not silent:
+            print("Government fares did not match any unified routes; skipping GTFS Fares v2 export.")
+        return
+
+    trip_dir_map = (
+        final_trips_df[['trip_id', 'route_id', 'direction_id']]
+        .dropna(subset=['trip_id', 'route_id', 'direction_id'])
+        .copy()
+    )
+    if trip_dir_map.empty:
+        if not silent:
+            print("No trip direction mapping available for fares; skipping export.")
+        return
+
+    trip_dir_map['direction_id'] = trip_dir_map['direction_id'].astype(int)
+    trip_dir_map['route_id'] = trip_dir_map['route_id'].astype(str)
+
+    stop_times = final_stop_times_df[['trip_id', 'stop_id', 'stop_sequence']].copy()
+    stop_times['stop_sequence'] = stop_times['stop_sequence'].astype(int)
+    stop_times = stop_times.merge(trip_dir_map, on='trip_id', how='inner')
+    if stop_times.empty:
+        if not silent:
+            print("Unified stop_times did not overlap with trips for fares; skipping export.")
+        return
+
+    stop_times.rename(columns={'route_id': 'unified_route_id'}, inplace=True)
+    stop_times['unified_route_id'] = stop_times['unified_route_id'].astype(str)
+
+    relevant_pairs = merged[['unified_route_id', 'direction_id']].drop_duplicates()
+    stop_times = stop_times.merge(relevant_pairs, on=['unified_route_id', 'direction_id'], how='inner')
+    if stop_times.empty:
+        if not silent:
+            print("No stop_times matched fare route/direction pairs; skipping export.")
+        return
+
+    stop_group = (
+        stop_times
+        .groupby(['unified_route_id', 'direction_id', 'stop_sequence'], as_index=False)
+        .agg({'stop_id': lambda ids: tuple(sorted(set(ids)))})
+    )
+    stop_group.rename(columns={'stop_id': 'stop_ids'}, inplace=True)
+    stop_group = stop_group[stop_group['stop_ids'].map(len) > 0]
+    if stop_group.empty:
+        if not silent:
+            print("Unable to build stop groupings for fares; skipping export.")
+        return
+
+    target_sequences = merged[['unified_route_id', 'direction_id', 'origin_sequence']].drop_duplicates()
+    stop_group = stop_group.merge(
+        target_sequences,
+        left_on=['unified_route_id', 'direction_id', 'stop_sequence'],
+        right_on=['unified_route_id', 'direction_id', 'origin_sequence'],
+        how='inner'
+    )
+    if stop_group.empty:
+        if not silent:
+            print("No stop sequences aligned with fare origins; skipping export.")
+        return
+
+    merged = merged.sort_values(['unified_route_id', 'direction_id', 'origin_sequence']).copy()
+    merged['segment_index'] = (
+        merged.groupby(['unified_route_id', 'direction_id'])['price']
+        .transform(lambda s: s.ne(s.shift()).cumsum())
+    )
+
+    segment_df = (
+        merged.groupby(['unified_route_id', 'direction_id', 'segment_index'], as_index=False)
+        .agg(
+            price=('price', 'first'),
+            currency_type=('currency_type', 'first'),
+            origin_start=('origin_sequence', 'min'),
+            origin_end=('origin_sequence', 'max')
+        )
+    )
+    if segment_df.empty:
+        if not silent:
+            print("Unable to derive fare segments; skipping export.")
+        return
+
+    segment_df['origin_start'] = segment_df['origin_start'].astype(int)
+    segment_df['origin_end'] = segment_df['origin_end'].astype(int)
+
+    def _format_range(start: int, end: int) -> str:
+        return f"stop {start}" if start == end else f"stops {start}-{end}"
+
+    segment_df['area_id'] = segment_df.apply(
+        lambda r: f"{r.unified_route_id}__{r.direction_id}__S{int(r.origin_start):03d}-{int(r.origin_end):03d}",
+        axis=1
+    )
+    segment_df['area_name'] = segment_df.apply(
+        lambda r: f"{r.unified_route_id} (dir {r.direction_id}) {_format_range(int(r.origin_start), int(r.origin_end))}",
+        axis=1
+    )
+
+    merged = merged.merge(
+        segment_df[['unified_route_id', 'direction_id', 'segment_index', 'area_id']],
+        on=['unified_route_id', 'direction_id', 'segment_index'],
+        how='inner'
+    )
+    if merged.empty:
+        if not silent:
+            print("Fares lost after aligning with fare areas; skipping GTFS Fares v2 export.")
+        return
+
+    sequence_area_records = []
+    for seg in segment_df.itertuples(index=False):
+        for seq in range(seg.origin_start, seg.origin_end + 1):
+            sequence_area_records.append({
+                'unified_route_id': seg.unified_route_id,
+                'direction_id': seg.direction_id,
+                'origin_sequence': seq,
+                'area_id': seg.area_id
+            })
+
+    sequence_area_map = pd.DataFrame(sequence_area_records)
+    stop_group = stop_group.merge(
+        sequence_area_map,
+        on=['unified_route_id', 'direction_id', 'origin_sequence'],
+        how='inner'
+    )
+    if stop_group.empty:
+        if not silent:
+            print("Stop groups failed to align with fare areas; skipping GTFS Fares v2 export.")
+        return
+
+    def _collapse_stop_ids(series: pd.Series) -> tuple:
+        combined = []
+        for ids in series:
+            if isinstance(ids, (list, tuple, set)):
+                combined.extend(ids)
+        return tuple(sorted(set(combined)))
+
+    area_stop_map = (
+        stop_group.groupby('area_id')['stop_ids']
+        .apply(_collapse_stop_ids)
+        .reset_index()
+    )
+
+    areas_df = segment_df[['area_id', 'area_name']].drop_duplicates()
+    stop_areas_df = _build_stop_areas_df(area_stop_map[['area_id', 'stop_ids']])
+
+    segment_df['fare_product_id'] = segment_df['area_id'].apply(lambda x: f"FP-{x}")
+
+    segment_df['fare_product_name'] = segment_df.apply(
+        lambda r: f"{r.unified_route_id} dir {r.direction_id} {_format_range(int(r.origin_start), int(r.origin_end))} cash",
+        axis=1
+    )
+
+    fare_products_df = (
+        segment_df[['fare_product_id', 'fare_product_name', 'currency_type', 'price']]
+        .drop_duplicates()
+        .rename(columns={'currency_type': 'currency', 'price': 'amount'})
+    )
+    fare_products_df['fare_media_id'] = 'CASH'
+    fare_products_df['amount'] = fare_products_df['amount'].round(2)
+    fare_products_df['rider_category_id'] = None
+    fare_products_df = fare_products_df[['fare_product_id', 'fare_product_name', 'rider_category_id', 'fare_media_id', 'amount', 'currency']]
+
+    leg_rules_df = segment_df[['unified_route_id', 'direction_id', 'fare_product_id', 'area_id']].drop_duplicates()
+    leg_rules_df['leg_group_id'] = leg_rules_df.apply(
+        lambda r: f"LG-{r.unified_route_id}__{r.direction_id}", axis=1
+    )
+    leg_rules_df['network_id'] = leg_rules_df['unified_route_id']
+    leg_rules_df = leg_rules_df[['leg_group_id', 'network_id', 'fare_product_id', 'area_id']]
+    leg_rules_df = leg_rules_df.assign(
+        to_area_id=None,
+        from_timeframe_group_id=None,
+        to_timeframe_group_id=None,
+        rule_priority=None
+    )
+    leg_rules_df.rename(columns={'area_id': 'from_area_id'}, inplace=True)
+    leg_rules_df = leg_rules_df[['leg_group_id', 'network_id', 'from_area_id', 'to_area_id', 'from_timeframe_group_id', 'to_timeframe_group_id', 'fare_product_id', 'rule_priority']]
+
+    fare_media_df = pd.DataFrame([
+        {'fare_media_id': 'CASH', 'fare_media_name': 'Cash payment', 'fare_media_type': 0}
+    ])
+
+    networks_df = pd.DataFrame(columns=['network_id', 'network_name'])
+    if not leg_rules_df.empty and 'network_id' in leg_rules_df.columns:
+        unique_network_ids = (
+            leg_rules_df['network_id']
+            .dropna()
+            .astype(str)
+            .drop_duplicates()
+        )
+        if not unique_network_ids.empty:
+            networks_df = pd.DataFrame({'network_id': unique_network_ids})
+            networks_df['network_name'] = networks_df['network_id']
+
+            if final_routes_df is not None and not final_routes_df.empty and 'network_id' in final_routes_df.columns:
+                routes_subset_cols = [col for col in ['network_id', 'route_long_name', 'route_short_name', 'agency_id'] if col in final_routes_df.columns]
+                if routes_subset_cols:
+                    routes_subset = (
+                        final_routes_df[routes_subset_cols]
+                        .dropna(subset=['network_id'])
+                        .copy()
+                    )
+                    if not routes_subset.empty:
+                        routes_subset['network_id'] = routes_subset['network_id'].astype(str)
+
+                        def _derive_network_name(row):
+                            long_name = str(row.get('route_long_name', '') or '').strip()
+                            short_name = str(row.get('route_short_name', '') or '').strip()
+                            agency = str(row.get('agency_id', '') or '').strip()
+                            if long_name:
+                                return long_name
+                            if short_name and agency:
+                                return f"{agency} {short_name}"
+                            if short_name:
+                                return short_name
+                            if agency:
+                                return f"{agency} {row['network_id']}"
+                            return row['network_id']
+
+                        routes_subset = routes_subset.drop_duplicates(subset=['network_id'], keep='first')
+                        routes_subset['network_name_candidate'] = routes_subset.apply(_derive_network_name, axis=1)
+                        networks_df = networks_df.merge(
+                            routes_subset[['network_id', 'network_name_candidate']],
+                            on='network_id',
+                            how='left'
+                        )
+                        networks_df['network_name'] = networks_df['network_name_candidate'].combine_first(networks_df['network_name'])
+                        networks_df.drop(columns=['network_name_candidate'], inplace=True)
+            networks_df = networks_df[['network_id', 'network_name']]
+
+    areas_path = os.path.join(final_output_dir, 'areas.txt')
+    stop_areas_path = os.path.join(final_output_dir, 'stop_areas.txt')
+    fare_media_path = os.path.join(final_output_dir, 'fare_media.txt')
+    fare_products_path = os.path.join(final_output_dir, 'fare_products.txt')
+    fare_leg_rules_path = os.path.join(final_output_dir, 'fare_leg_rules.txt')
+    networks_path = os.path.join(final_output_dir, 'networks.txt')
+
+    areas_df.to_csv(areas_path, index=False)
+    stop_areas_df.to_csv(stop_areas_path, index=False)
+    fare_media_df.to_csv(fare_media_path, index=False)
+    fare_products_df.to_csv(fare_products_path, index=False)
+    leg_rules_df.to_csv(fare_leg_rules_path, index=False)
+    if not networks_df.empty:
+        networks_df.to_csv(networks_path, index=False)
+
+    if not silent:
+        print(
+            f"Wrote GTFS Fares v2 files: {len(fare_products_df)} fare_products, "
+            f"{len(leg_rules_df)} fare_leg_rules, {len(areas_df)} areas, "
+            f"{len(networks_df)} networks"
+        )
 
 
 def generate_frequencies_from_schedule(
@@ -1824,6 +2173,23 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
 
     final_routes_df['route_color'] = final_routes_df['agency_id'].apply(get_route_color)
     final_routes_df['route_text_color'] = 'FFFFFF'
+    final_routes_df['network_id'] = final_routes_df['route_id'].astype(str)
+
+    routes_output_cols = [
+        'route_id',
+        'agency_id',
+        'route_short_name',
+        'route_long_name',
+        'route_type',
+        'network_id',
+        'route_color',
+        'route_text_color'
+    ]
+    for col in routes_output_cols:
+        if col not in final_routes_df.columns:
+            final_routes_df[col] = None
+    final_routes_output_df = final_routes_df[routes_output_cols]
+
     all_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df, mtr_trips_df, lr_trips_df], ignore_index=True)
 
     # Attach agency to government trips for scoping
@@ -2180,6 +2546,20 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         if not silent:
             print(f"Warning: direction inversion check failed: {e}")
 
+    with PhaseTimer('Build fares v2', phase_timings, silent):
+        try:
+            build_fares_v2(
+                engine=engine,
+                final_output_dir=final_output_dir,
+                final_trips_df=final_trips_df,
+                final_stop_times_df=final_stop_times_output_df,
+                final_routes_df=final_routes_output_df,
+                silent=silent
+            )
+        except Exception as e:
+            if not silent:
+                print(f"Warning: GTFS Fares v2 export failed: {e}")
+
     # --- Shapes --- 
     if not silent:
         print("Generating shapes from CSDI data...")
@@ -2221,7 +2601,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
 
 
     with PhaseTimer('Write core tables', phase_timings, silent):
-        final_routes_df.to_csv(os.path.join(final_output_dir, 'routes.txt'), index=False)
+        final_routes_output_df.to_csv(os.path.join(final_output_dir, 'routes.txt'), index=False)
         final_trips_output_df.to_csv(os.path.join(final_output_dir, 'trips.txt'), index=False)
         final_stop_times_output_df.to_csv(os.path.join(final_output_dir, 'stop_times.txt'), index=False)
 
