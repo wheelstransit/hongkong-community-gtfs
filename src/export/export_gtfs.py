@@ -10,8 +10,26 @@ from src.processing.utils import get_direction
 from src.processing.gtfs_route_matcher import match_operator_routes_to_government_gtfs, match_operator_routes_with_coop_fallback
 from datetime import timedelta
 import re
-from typing import Union
+from typing import Union, Optional
 import math
+import time, json
+
+class PhaseTimer:
+    """Lightweight context manager for phase timing (non-invasive)."""
+    def __init__(self, name: str, collector: list, silent: bool=False):
+        self.name = name
+        self.collector = collector
+        self.silent = silent
+
+    def __enter__(self):
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        dur = time.time() - self.start
+        self.collector.append({'phase': self.name, 'seconds': dur})
+        if not self.silent:
+            print(f"[TIMER] {self.name}: {dur:.2f}s")
 
 def format_timedelta(td): #timedelta object turning into HH:MM:SS
     total_seconds = int(td.total_seconds())
@@ -42,6 +60,132 @@ def parse_headway_to_avg_secs(headway_str: str) -> Union[int, None]:
         return int(avg_mins * 60)
     except (ValueError, TypeError):
         return None
+
+
+def _hhmmss_to_seconds(timestr: str) -> Optional[int]:
+    if timestr is None:
+        return None
+    try:
+        parts = str(timestr).strip().split(':')
+        if len(parts) != 3:
+            return None
+        hours, minutes, seconds = map(int, parts)
+        return hours * 3600 + minutes * 60 + seconds
+    except (ValueError, TypeError):
+        return None
+
+
+def _seconds_to_hhmmss(total_seconds: int) -> str:
+    return format_timedelta(timedelta(seconds=int(total_seconds)))
+
+
+def generate_frequencies_from_schedule(
+    trip_id_mapping: pd.DataFrame,
+    existing_frequencies_df: pd.DataFrame,
+    gov_stop_times_df: pd.DataFrame,
+    silent: bool = False
+) -> pd.DataFrame:
+    """Derive frequency entries for trips lacking gov-provided headway data."""
+    SINGLE_DEPARTURE_HEADWAY_SECS = 24 * 3600  # treat single departures as once-per-day service
+    required_cols = ['trip_id', 'start_time', 'end_time', 'headway_secs']
+    if trip_id_mapping is None or trip_id_mapping.empty:
+        return pd.DataFrame(columns=required_cols)
+    if gov_stop_times_df is None or gov_stop_times_df.empty:
+        return pd.DataFrame(columns=required_cols)
+
+    existing_trips = set(existing_frequencies_df['trip_id']) if existing_frequencies_df is not None and not existing_frequencies_df.empty else set()
+    all_trips = set(trip_id_mapping['new_trip_id'])
+    missing_trips = sorted(all_trips - existing_trips)
+    if not missing_trips:
+        return pd.DataFrame(columns=required_cols)
+
+    stop_times = gov_stop_times_df[['trip_id', 'stop_sequence', 'departure_time', 'arrival_time']].copy()
+    stop_times['stop_sequence'] = pd.to_numeric(stop_times['stop_sequence'], errors='coerce')
+    stop_times.dropna(subset=['stop_sequence'], inplace=True)
+    stop_times['stop_sequence'] = stop_times['stop_sequence'].astype(int)
+    stop_times['time_candidate'] = stop_times['departure_time']
+    blank_mask = stop_times['time_candidate'].isna() | (stop_times['time_candidate'].astype(str).str.strip() == '')
+    stop_times.loc[blank_mask, 'time_candidate'] = stop_times.loc[blank_mask, 'arrival_time']
+    stop_times['time_candidate'] = stop_times['time_candidate'].fillna('').astype(str).str.strip()
+    stop_times = stop_times[stop_times['time_candidate'] != '']
+    if stop_times.empty:
+        return pd.DataFrame(columns=required_cols)
+
+    first_departures = (
+        stop_times
+        .sort_values(['trip_id', 'stop_sequence'])
+        .groupby('trip_id')['time_candidate']
+        .first()
+    )
+    first_departures.index = first_departures.index.astype(str)
+
+    fallback_records = []
+    mapping_grouped = trip_id_mapping.groupby('new_trip_id')['original_trip_id'].agg(list)
+
+    for new_trip_id in missing_trips:
+        original_ids = mapping_grouped.get(new_trip_id)
+        if not original_ids:
+            continue
+        if not isinstance(original_ids, (list, tuple, set)):
+            original_ids = [original_ids]
+        original_ids = [str(oid) for oid in original_ids]
+        departures = first_departures.reindex(original_ids).dropna()
+        if departures.empty:
+            continue
+
+        sec_values = sorted({
+            sec for sec in (_hhmmss_to_seconds(t) for t in departures.values)
+            if sec is not None
+        })
+        if len(sec_values) < 2:
+            # synthesize a once-per-day headway to keep the trip in frequencies.txt
+            start_sec = sec_values[0]
+            fallback_records.append({
+                'trip_id': new_trip_id,
+                'start_time': _seconds_to_hhmmss(start_sec),
+                'end_time': _seconds_to_hhmmss(start_sec + SINGLE_DEPARTURE_HEADWAY_SECS),
+                'headway_secs': SINGLE_DEPARTURE_HEADWAY_SECS
+            })
+            if not silent:
+                print(f"Generated synthetic 24h headway for single-departure trip {new_trip_id}.")
+            continue
+
+        headway_segments = []
+        for idx in range(len(sec_values) - 1):
+            start_sec = sec_values[idx]
+            next_sec = sec_values[idx + 1]
+            headway = next_sec - start_sec
+            if headway <= 0:
+                continue
+            headway_segments.append((start_sec, next_sec, headway))
+
+        if not headway_segments:
+            continue
+
+        for start_sec, end_sec, headway in headway_segments:
+            fallback_records.append({
+                'trip_id': new_trip_id,
+                'start_time': _seconds_to_hhmmss(start_sec),
+                'end_time': _seconds_to_hhmmss(end_sec),
+                'headway_secs': headway
+            })
+
+        # Extend final interval using last observed headway so last departure is included
+        last_departure_sec = sec_values[-1]
+        last_headway = headway_segments[-1][2]
+        fallback_records.append({
+            'trip_id': new_trip_id,
+            'start_time': _seconds_to_hhmmss(last_departure_sec),
+            'end_time': _seconds_to_hhmmss(last_departure_sec + last_headway),
+            'headway_secs': last_headway
+        })
+
+    if not fallback_records:
+        if not silent:
+            print("No fallback frequency records generated from schedules.")
+        return pd.DataFrame(columns=required_cols)
+
+    return pd.DataFrame(fallback_records)
 
 def resolve_overlapping_frequencies(frequencies_df: pd.DataFrame) -> pd.DataFrame:
     # resolves overlapping frequency intervals for the same trip_id
@@ -106,7 +250,464 @@ def resolve_overlapping_frequencies(frequencies_df: pd.DataFrame) -> pd.DataFram
 
     return final_df.drop(columns=['start_time_td', 'end_time_td'])
 
+# -------------------------------------------------------------
+# Trip Headsign Generation (English)
+# -------------------------------------------------------------
+def generate_trip_headsigns(engine: Engine, trips_df: pd.DataFrame, silent: bool=False) -> pd.DataFrame:
+    """Populate trip_headsign for each trip across agencies (English only).
+
+    Rules (current heuristic):
+      KMB: use direction-specific dest_en from kmb_routes (matched on route, bound, service_type)
+      CTB: use dest_en from citybus_routes for that direction (bound O = outbound, I = inbound)
+      NLB: parse routeName_e (Origin > Destination) => bound O dest part, bound I origin part
+      MTRB: use last stop name for (route_id, direction) from mtrbus_stop_sequences
+      GMB: fallback to route_short_name (insufficient structured data for direction) or parsed if available later
+    """
+    if trips_df.empty:
+        trips_df['trip_headsign'] = ''
+        return trips_df
+
+    # Ensure columns for later joins exist
+    work_df = trips_df.copy()
+    if 'trip_headsign' not in work_df.columns:
+        work_df['trip_headsign'] = ''
+
+    # Derive agency_id from route_id if missing (e.g., final trips assembly omitted it)
+    if 'agency_id' not in work_df.columns and 'route_id' in work_df.columns:
+        work_df['agency_id'] = work_df['route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[0] if isinstance(rid, str) and '-' in rid else str(rid))
+
+    # Derive route_short_name consistently if absent. Patterns:
+    #  KMB-<route> / CTB-<route> / NLB-<routeNo> => two segments
+    #  GMB-<region>-<code> => three segments we want region-code
+    #  MTRB-<id>, others fallback to second segment if exists
+    if 'route_short_name' not in work_df.columns and 'route_id' in work_df.columns:
+        def _derive_short(rid: str):
+            if not isinstance(rid, str):
+                return None
+            parts = rid.split('-')
+            if len(parts) == 3 and parts[0] == 'GMB':
+                return f"{parts[1]}-{parts[2]}"  # region-code
+            if len(parts) >= 2:
+                return parts[1]
+            return rid
+
+        work_df['route_short_name'] = work_df['route_id'].apply(_derive_short)
+
+    # NOTE: Previous implementation used merges then wrote using merge frame indices, causing
+    # misalignment (RangeIndex) and cross-agency contamination. Replaced with explicit mapping
+    # dictionaries keyed by original row index to guarantee correctness.
+
+    # KMB
+    try:
+        kmb_mask = work_df['agency_id'] == 'KMB'
+        if kmb_mask.any():
+            kmb_subset = work_df.loc[kmb_mask]
+            if 'service_type' not in kmb_subset.columns:
+                service_type_series = kmb_subset['trip_id'].str.split('-').str[3]
+            else:
+                service_type_series = kmb_subset['service_type']
+            kmb_routes = pd.read_sql("SELECT unique_route_id, dest_en FROM kmb_routes", engine)
+            parts = kmb_routes['unique_route_id'].str.split('_', expand=True)
+            kmb_routes['route'] = parts[0]; kmb_routes['bound'] = parts[1]; kmb_routes['service_type'] = parts[2]
+            kmb_lookup = kmb_routes.drop_duplicates(['route','bound','service_type']).set_index(['route','bound','service_type'])['dest_en'].to_dict()
+            dests = []
+            for idx, row in kmb_subset.iterrows():
+                key = (row.get('route_short_name'), row.get('bound'), service_type_series.loc[idx])
+                dests.append(kmb_lookup.get(key, ''))
+            work_df.loc[kmb_subset.index, 'trip_headsign'] = dests
+    except Exception as e:
+        if not silent:
+            print(f"Headsign warning (KMB map): {e}")
+
+    # CTB
+    try:
+        ctb_mask = work_df['agency_id'] == 'CTB'
+        if ctb_mask.any():
+            ctb_subset = work_df.loc[ctb_mask]
+            city_routes = pd.read_sql("SELECT route, direction, dest_en FROM citybus_routes", engine)
+            city_lookup = city_routes.drop_duplicates(['route','direction']).set_index(['route','direction'])['dest_en'].to_dict()
+            mapped = []
+            for idx, row in ctb_subset.iterrows():
+                direction_str = {'O':'outbound','I':'inbound'}.get(row.get('bound'),'outbound')
+                mapped.append(city_lookup.get((row.get('route_short_name'), direction_str), work_df.at[idx,'trip_headsign']))
+            work_df.loc[ctb_subset.index, 'trip_headsign'] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign warning (CTB map): {e}")
+
+    # NLB
+    try:
+        nlb_mask = work_df['agency_id'] == 'NLB'
+        if nlb_mask.any():
+            nlb_subset = work_df.loc[nlb_mask]
+            nlb_routes = pd.read_sql('SELECT "routeNo" as route_no, "routeName_e" as route_name FROM nlb_routes', engine)
+            nlb_routes['route_short_name'] = nlb_routes['route_no'].astype(str)
+            split_df = nlb_routes['route_name'].str.replace('\u00a0',' ').str.replace('  ',' ').str.split(' > ', n=1, expand=True)
+            nlb_routes['origin_en'] = split_df[0]
+            nlb_routes['destination_en'] = split_df[1].fillna(split_df[0])
+            nlb_lookup = (
+                nlb_routes
+                .groupby('route_short_name', as_index=True)[['origin_en','destination_en']]
+                .first()
+                .to_dict('index')
+            )
+            mapped = []
+            for idx, row in nlb_subset.iterrows():
+                rec = nlb_lookup.get(str(row.get('route_short_name')))
+                if not rec:
+                    mapped.append(work_df.at[idx,'trip_headsign']); continue
+                mapped.append(rec['destination_en'] if row.get('bound')=='O' else rec['origin_en'])
+            work_df.loc[nlb_subset.index, 'trip_headsign'] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign warning (NLB map): {e}")
+
+    try:
+        mtrb_mask = work_df['agency_id'] == 'MTRB'
+        if mtrb_mask.any():
+            mtr_subset = work_df.loc[mtrb_mask]
+            mtr_routes_df = pd.read_sql("SELECT route_id, route_name_eng FROM mtrbus_routes", engine)
+            mtr_routes_df['route_short_name'] = mtr_routes_df['route_id'].astype(str)
+            split_df = mtr_routes_df['route_name_eng'].str.split(' to ', n=1, expand=True)
+            mtr_routes_df['origin_guess'] = split_df[0]
+            mtr_routes_df['dest_guess'] = split_df[1].fillna(split_df[0])
+            lookup = mtr_routes_df.set_index('route_short_name')[['origin_guess','dest_guess']].to_dict('index')
+            mapped = []
+            for idx, row in mtr_subset.iterrows():
+                rec = lookup.get(row.get('route_short_name'))
+                if not rec:
+                    mapped.append(work_df.at[idx,'trip_headsign']); continue
+                bound = row.get('bound') if 'bound' in row else ({0:'O',1:'I'}.get(row.get('direction_id'), 'O'))
+                mapped.append(rec['dest_guess'] if bound=='O' else rec['origin_guess'])
+            work_df.loc[mtr_subset.index, 'trip_headsign'] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign warning (MTRB map): {e}")
+
+    try:
+        gmb_mask = work_df['agency_id'] == 'GMB'
+        if gmb_mask.any():
+            gmb_routes = pd.read_sql('SELECT region, route_code, orig_en_primary, dest_en_primary, is_circular_any FROM gmb_routes', engine)
+            gmb_routes['route_short_name'] = gmb_routes['region'].astype(str)+'-'+gmb_routes['route_code'].astype(str)
+            gmb_routes = gmb_routes.drop_duplicates('route_short_name', keep='first')
+            # Outbound -> destination primary, Inbound -> origin primary
+            gmb_routes['headsign_outbound'] = gmb_routes.apply(lambda r: r['dest_en_primary'] if r.get('dest_en_primary') else r['route_short_name'], axis=1)
+            gmb_routes['headsign_inbound'] = gmb_routes.apply(lambda r: r['orig_en_primary'] if r.get('orig_en_primary') else r['route_short_name'], axis=1)
+            gmb_lookup = gmb_routes.set_index('route_short_name')[['headsign_outbound','headsign_inbound']].to_dict('index')
+            gmb_subset = work_df.loc[gmb_mask]
+            mapped = []
+            for idx, row in gmb_subset.iterrows():
+                rsn = row.get('route_short_name')
+                if not rsn and isinstance(row.get('route_id'), str) and row.get('route_id').count('-')>=2:
+                    parts = row.get('route_id').split('-',2)
+                    if len(parts)==3:
+                        rsn = f"{parts[1]}-{parts[2]}"
+                rec = gmb_lookup.get(rsn)
+                if not rec:
+                    mapped.append(work_df.at[idx,'trip_headsign']); continue
+                bound = row.get('bound') if 'bound' in row else ({0:'O',1:'I'}.get(row.get('direction_id'), 'O'))
+                mapped.append(rec['headsign_outbound'] if bound=='O' else rec['headsign_inbound'])
+            work_df.loc[gmb_subset.index, 'trip_headsign'] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign warning (GMB map): {e}")
+
+    # Final cleanup: ensure string type and fill blanks with route_short_name if still empty
+    if 'route_short_name' in work_df.columns:
+        empty_mask = (work_df['trip_headsign'].isna()) | (work_df['trip_headsign'].astype(str).str.strip()=='')
+        work_df.loc[empty_mask, 'trip_headsign'] = work_df.loc[empty_mask, 'route_short_name'].astype(str)
+    else:
+        # Derive a temporary route_short_name to fill empties later
+        work_df['__tmp_route_short_name'] = work_df['route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[1] if isinstance(rid, str) and '-' in rid else str(rid))
+        empty_mask = (work_df['trip_headsign'].isna()) | (work_df['trip_headsign'].astype(str).str.strip()=='')
+        work_df.loc[empty_mask, 'trip_headsign'] = work_df.loc[empty_mask, '__tmp_route_short_name'].astype(str)
+
+    # Second-pass normalization for NLB and GMB if still equal to short name (indicates mapping failure)
+    try:
+        # NLB normalization
+        nlb_sec_mask = work_df['agency_id']=='NLB'
+        if nlb_sec_mask.any():
+            # ensure normalized short name (strip agency prefix)
+            if 'route_short_name' not in work_df.columns:
+                work_df.loc[nlb_sec_mask,'__norm_rsn'] = work_df.loc[nlb_sec_mask,'route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[1] if isinstance(rid, str) and '-' in rid else str(rid))
+                rsn_series = work_df['__norm_rsn']
+            else:
+                rsn_series = work_df['route_short_name']
+            # Fetch route names again if needed
+            nlb_routes = pd.read_sql('SELECT "routeNo" as route_no, "routeName_e" as route_name FROM nlb_routes', engine)
+            nlb_routes['route_no'] = nlb_routes['route_no'].astype(str)
+            split_df = nlb_routes['route_name'].str.split(' > ', n=1, expand=True)
+            nlb_routes['origin_en'] = split_df[0]
+            nlb_routes['destination_en'] = split_df[1].fillna(split_df[0])
+            nlb_lookup = nlb_routes.set_index('route_no')[['origin_en','destination_en']].to_dict('index')
+            updated = []
+            for idx in work_df.loc[nlb_sec_mask].index:
+                current = work_df.at[idx,'trip_headsign']
+                rsn = str(rsn_series.loc[idx])
+                rec = nlb_lookup.get(rsn)
+                if rec and (current == rsn or not current):
+                    bound = work_df.at[idx,'bound'] if 'bound' in work_df.columns else ({0:'O',1:'I'}.get(work_df.at[idx,'direction_id'], 'O'))
+                    updated.append((idx, rec['destination_en'] if bound=='O' else rec['origin_en']))
+            for idx,val in updated:
+                work_df.at[idx,'trip_headsign'] = val
+    except Exception as e:
+        if not silent:
+            print(f"Headsign second-pass warning (NLB): {e}")
+
+    try:
+        # GMB second pass (if headsign still short name)
+        gmb_sec_mask = work_df['agency_id']=='GMB'
+        if gmb_sec_mask.any():
+            gmb_routes = pd.read_sql('SELECT region, route_code, orig_en_primary, dest_en_primary FROM gmb_routes', engine)
+            gmb_routes['rsn'] = gmb_routes['region'].astype(str)+'-'+gmb_routes['route_code'].astype(str)
+            gmb_routes = gmb_routes.drop_duplicates('rsn', keep='first')
+            gmb_lookup = gmb_routes.set_index('rsn')[['orig_en_primary','dest_en_primary']].to_dict('index')
+            for idx in work_df.loc[gmb_sec_mask].index:
+                rsn = work_df.at[idx,'route_short_name'] if 'route_short_name' in work_df.columns else work_df.at[idx,'route_id'].split('-',1)[1]
+                current = work_df.at[idx,'trip_headsign']
+                rec = gmb_lookup.get(rsn)
+                if rec and (current==rsn or not current):
+                    bound = work_df.at[idx,'bound'] if 'bound' in work_df.columns else ({0:'O',1:'I'}.get(work_df.at[idx,'direction_id'],'O'))
+                    chosen = rec['dest_en_primary'] if bound=='O' else rec['orig_en_primary']
+                    if chosen:
+                        work_df.at[idx,'trip_headsign'] = chosen
+    except Exception as e:
+        if not silent:
+            print(f"Headsign second-pass warning (GMB): {e}")
+    work_df['trip_headsign'] = work_df['trip_headsign'].fillna('').astype(str)
+    return work_df
+
+def generate_trip_headsigns_tc(engine: Engine, trips_df: pd.DataFrame, english_headsigns: Optional[pd.Series] = None, silent: bool=False) -> pd.Series:
+    """Generate Traditional Chinese trip headsigns aligned with trips_df index."""
+    if trips_df.empty:
+        return pd.Series(index=trips_df.index, dtype=str)
+
+    work_df = trips_df.copy()
+    if 'agency_id' not in work_df.columns and 'route_id' in work_df.columns:
+        work_df['agency_id'] = work_df['route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[0] if isinstance(rid, str) and '-' in rid else str(rid))
+
+    if 'route_short_name' not in work_df.columns and 'route_id' in work_df.columns:
+        def _derive_short(rid: str):
+            if not isinstance(rid, str):
+                return None
+            parts = rid.split('-')
+            if len(parts) == 3 and parts[0] == 'GMB':
+                return f"{parts[1]}-{parts[2]}"
+            if len(parts) >= 2:
+                return parts[1]
+            return rid
+
+        work_df['route_short_name'] = work_df['route_id'].apply(_derive_short)
+
+    headsigns = pd.Series('', index=work_df.index, dtype='object')
+
+    # KMB
+    try:
+        kmb_mask = work_df['agency_id'] == 'KMB'
+        if kmb_mask.any():
+            kmb_subset = work_df.loc[kmb_mask]
+            if 'service_type' not in kmb_subset.columns:
+                service_type_series = kmb_subset['trip_id'].str.split('-').str[3]
+            else:
+                service_type_series = kmb_subset['service_type']
+            kmb_routes = pd.read_sql("SELECT unique_route_id, dest_tc FROM kmb_routes", engine)
+            parts = kmb_routes['unique_route_id'].str.split('_', expand=True)
+            kmb_routes['route'] = parts[0]; kmb_routes['bound'] = parts[1]; kmb_routes['service_type'] = parts[2]
+            kmb_lookup = (
+                kmb_routes
+                .drop_duplicates(['route','bound','service_type'])
+                .set_index(['route','bound','service_type'])['dest_tc']
+                .to_dict()
+            )
+            mapped = []
+            for idx, row in kmb_subset.iterrows():
+                key = (row.get('route_short_name'), row.get('bound'), service_type_series.loc[idx])
+                mapped.append(kmb_lookup.get(key, ''))
+            headsigns.loc[kmb_subset.index] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC warning (KMB map): {e}")
+
+    # CTB
+    try:
+        ctb_mask = work_df['agency_id'] == 'CTB'
+        if ctb_mask.any():
+            ctb_subset = work_df.loc[ctb_mask]
+            city_routes = pd.read_sql("SELECT route, direction, dest_tc FROM citybus_routes", engine)
+            city_lookup = city_routes.drop_duplicates(['route','direction']).set_index(['route','direction'])['dest_tc'].to_dict()
+            mapped = []
+            for idx, row in ctb_subset.iterrows():
+                direction_str = {'O':'outbound','I':'inbound'}.get(row.get('bound'),'outbound')
+                mapped.append(city_lookup.get((row.get('route_short_name'), direction_str), headsigns.at[idx]))
+            headsigns.loc[ctb_subset.index] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC warning (CTB map): {e}")
+
+    # NLB
+    try:
+        nlb_mask = work_df['agency_id'] == 'NLB'
+        if nlb_mask.any():
+            nlb_subset = work_df.loc[nlb_mask]
+            nlb_routes = pd.read_sql('SELECT "routeNo" as route_no, "routeName_c" as route_name FROM nlb_routes', engine)
+            nlb_routes['route_short_name'] = nlb_routes['route_no'].astype(str)
+            clean = nlb_routes['route_name'].astype(str).str.replace('\u00a0',' ', regex=False)
+            clean = clean.str.replace('  > ', ' > ', regex=False)
+            split_df = clean.str.split(' > ', n=1, expand=True)
+            nlb_routes['origin_tc'] = split_df[0]
+            nlb_routes['destination_tc'] = split_df[1].fillna(split_df[0])
+            nlb_lookup = (
+                nlb_routes
+                .groupby('route_short_name', as_index=True)[['origin_tc','destination_tc']]
+                .first()
+                .to_dict('index')
+            )
+            mapped = []
+            for idx, row in nlb_subset.iterrows():
+                rec = nlb_lookup.get(str(row.get('route_short_name')))
+                if not rec:
+                    mapped.append(headsigns.at[idx]); continue
+                mapped.append(rec['destination_tc'] if row.get('bound')=='O' else rec['origin_tc'])
+            headsigns.loc[nlb_subset.index] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC warning (NLB map): {e}")
+
+    # MTR Bus
+    try:
+        mtrb_mask = work_df['agency_id'] == 'MTRB'
+        if mtrb_mask.any():
+            mtr_subset = work_df.loc[mtrb_mask]
+            mtr_routes_df = pd.read_sql("SELECT route_id, route_name_chi FROM mtrbus_routes", engine)
+            mtr_routes_df['route_short_name'] = mtr_routes_df['route_id'].astype(str)
+
+            def split_cn(text):
+                if not isinstance(text, str):
+                    return ('', '')
+                text = text.strip()
+                if not text:
+                    return ('', '')
+                separators = ['至', '往', '到', '->', '－', '-', ' — ', '—', ' – ']
+                for sep in separators:
+                    if sep in text:
+                        parts = text.split(sep, 1)
+                        return (parts[0].strip(), parts[1].strip())
+                return (text, text)
+
+            parsed = mtr_routes_df['route_name_chi'].apply(split_cn)
+            mtr_routes_df['origin_guess'] = parsed.apply(lambda x: x[0])
+            mtr_routes_df['dest_guess'] = parsed.apply(lambda x: x[1])
+            lookup = mtr_routes_df.set_index('route_short_name')[['origin_guess','dest_guess']].to_dict('index')
+            mapped = []
+            for idx, row in mtr_subset.iterrows():
+                rec = lookup.get(row.get('route_short_name'))
+                if not rec:
+                    mapped.append(headsigns.at[idx]); continue
+                bound = row.get('bound') if 'bound' in row else ({0:'O',1:'I'}.get(row.get('direction_id'), 'O'))
+                mapped.append(rec['dest_guess'] if bound=='O' else rec['origin_guess'])
+            headsigns.loc[mtr_subset.index] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC warning (MTRB map): {e}")
+
+    # GMB
+    try:
+        gmb_mask = work_df['agency_id'] == 'GMB'
+        if gmb_mask.any():
+            gmb_routes = pd.read_sql('SELECT region, route_code, orig_tc_primary, dest_tc_primary FROM gmb_routes', engine)
+            gmb_routes['route_short_name'] = gmb_routes['region'].astype(str)+'-'+gmb_routes['route_code'].astype(str)
+            gmb_routes = gmb_routes.drop_duplicates('route_short_name', keep='first')
+            gmb_routes['headsign_outbound'] = gmb_routes.apply(lambda r: r['dest_tc_primary'] if r.get('dest_tc_primary') else r['route_short_name'], axis=1)
+            gmb_routes['headsign_inbound'] = gmb_routes.apply(lambda r: r['orig_tc_primary'] if r.get('orig_tc_primary') else r['route_short_name'], axis=1)
+            gmb_lookup = gmb_routes.set_index('route_short_name')[['headsign_outbound','headsign_inbound']].to_dict('index')
+            gmb_subset = work_df.loc[gmb_mask]
+            mapped = []
+            for idx, row in gmb_subset.iterrows():
+                rsn = row.get('route_short_name')
+                if not rsn and isinstance(row.get('route_id'), str) and row.get('route_id').count('-')>=2:
+                    parts = row.get('route_id').split('-',2)
+                    if len(parts)==3:
+                        rsn = f"{parts[1]}-{parts[2]}"
+                rec = gmb_lookup.get(rsn)
+                if not rec:
+                    mapped.append(headsigns.at[idx]); continue
+                bound = row.get('bound') if 'bound' in row else ({0:'O',1:'I'}.get(row.get('direction_id'), 'O'))
+                mapped.append(rec['headsign_outbound'] if bound=='O' else rec['headsign_inbound'])
+            headsigns.loc[gmb_subset.index] = mapped
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC warning (GMB map): {e}")
+
+    # Fill empties using fallbacks
+    headsigns = headsigns.fillna('').astype(str)
+    empty_mask = headsigns.str.strip() == ''
+    if english_headsigns is not None:
+        fallback = english_headsigns.reindex(headsigns.index).astype(str)
+        headsigns.loc[empty_mask] = fallback.loc[empty_mask]
+        empty_mask = headsigns.str.strip() == ''
+
+    if empty_mask.any():
+        if 'route_short_name' in work_df.columns:
+            headsigns.loc[empty_mask] = work_df.loc[empty_mask, 'route_short_name'].astype(str)
+        else:
+            headsigns.loc[empty_mask] = work_df.loc[empty_mask, 'route_id'].astype(str)
+
+    # Second-pass normalization for NLB and GMB similar to English
+    try:
+        nlb_sec_mask = work_df['agency_id']=='NLB'
+        if nlb_sec_mask.any():
+            if 'route_short_name' not in work_df.columns:
+                work_df.loc[nlb_sec_mask,'__norm_rsn'] = work_df.loc[nlb_sec_mask,'route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[1] if isinstance(rid, str) and '-' in rid else str(rid))
+                rsn_series = work_df['__norm_rsn']
+            else:
+                rsn_series = work_df['route_short_name']
+            nlb_routes = pd.read_sql('SELECT "routeNo" as route_no, "routeName_c" as route_name FROM nlb_routes', engine)
+            nlb_routes['route_no'] = nlb_routes['route_no'].astype(str)
+            clean = nlb_routes['route_name'].astype(str).str.replace('\u00a0',' ', regex=False)
+            clean = clean.str.replace('  > ', ' > ', regex=False)
+            split_df = clean.str.split(' > ', n=1, expand=True)
+            nlb_routes['origin_tc'] = split_df[0]
+            nlb_routes['destination_tc'] = split_df[1].fillna(split_df[0])
+            nlb_lookup = nlb_routes.set_index('route_no')[['origin_tc','destination_tc']].to_dict('index')
+            for idx in work_df.loc[nlb_sec_mask].index:
+                current = headsigns.at[idx]
+                rsn = str(rsn_series.loc[idx])
+                rec = nlb_lookup.get(rsn)
+                if rec and (current == rsn or not str(current).strip()):
+                    bound = work_df.at[idx,'bound'] if 'bound' in work_df.columns else ({0:'O',1:'I'}.get(work_df.at[idx,'direction_id'], 'O'))
+                    headsigns.at[idx] = rec['destination_tc'] if bound=='O' else rec['origin_tc']
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC second-pass warning (NLB): {e}")
+
+    try:
+        gmb_sec_mask = work_df['agency_id']=='GMB'
+        if gmb_sec_mask.any():
+            gmb_routes = pd.read_sql('SELECT region, route_code, orig_tc_primary, dest_tc_primary FROM gmb_routes', engine)
+            gmb_routes['rsn'] = gmb_routes['region'].astype(str)+'-'+gmb_routes['route_code'].astype(str)
+            gmb_routes = gmb_routes.drop_duplicates('rsn', keep='first')
+            gmb_lookup = gmb_routes.set_index('rsn')[['orig_tc_primary','dest_tc_primary']].to_dict('index')
+            for idx in work_df.loc[gmb_sec_mask].index:
+                if 'route_short_name' in work_df.columns:
+                    rsn = work_df.at[idx,'route_short_name']
+                else:
+                    rid = work_df.at[idx,'route_id']
+                    rsn = rid.split('-',1)[1] if isinstance(rid, str) and '-' in rid else rid
+                current = headsigns.at[idx]
+                rec = gmb_lookup.get(rsn)
+                if rec and (current == rsn or not str(current).strip()):
+                    bound = work_df.at[idx,'bound'] if 'bound' in work_df.columns else ({0:'O',1:'I'}.get(work_df.at[idx,'direction_id'], 'O'))
+                    chosen = rec['dest_tc_primary'] if bound=='O' else rec['orig_tc_primary']
+                    if chosen:
+                        headsigns.at[idx] = chosen
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC second-pass warning (GMB): {e}")
+
+    return headsigns.fillna('').astype(str)
+
 def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict, mtr_headway_data: dict, osm_data: dict, silent: bool = False, no_regenerate_shapes: bool = False):
+    phase_timings = []
     print("==========================================")
     print("ENTERING export_unified_feed")
     print("==========================================")
@@ -269,8 +870,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     
     try:
         parsed_direction = gov_trips_df['trip_id'].str.split('-').str[1].astype(int)
-        # Government uses: 1=outbound, 2=inbound like wtf
-        # We want: 0=outbound, 1=inbound (to match KMB I/O mapping)
+        # Government uses: 1=outbound, 2=inbound
+        # We want: 0=outbound, 1=inbound (CTB and KMB both use O/I mapping)
         gov_trips_df['direction_id'] = (parsed_direction == 2).astype(int)
         if not silent:
             print("Successfully parsed 'direction_id' from government trip_id.")
@@ -329,11 +930,12 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     if not silent:
         print("Using enhanced stop-count-based matching for KMB routes...")
     
-    kmb_route_matches = match_operator_routes_to_government_gtfs(
-        engine=engine,
-        operator_name="KMB",
-        debug=not silent
-    )
+    with PhaseTimer('KMB route matching', phase_timings, silent):
+        kmb_route_matches = match_operator_routes_to_government_gtfs(
+            engine=engine,
+            operator_name="KMB",
+            debug=not silent
+        )
     
     kmb_trips_list = []
     if kmb_route_matches:
@@ -417,15 +1019,16 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         })
     final_ctb_routes = pd.DataFrame(final_ctb_routes_list)
 
-    # Use enhanced stop-count-based matching for CTB routes with co-op route handling
+    # Match CTB routes using TD ROUTE MDB mapping with co-op route handling
     if not silent:
-        print("Using enhanced stop-count-based matching for CTB routes with co-op handling...")
+        print("Matching CTB routes via TD ROUTE MDB (with co-op handling)...")
     
-    ctb_route_matches = match_operator_routes_to_government_gtfs(
-        engine=engine,
-        operator_name="CTB",
-        debug=not silent
-    )
+    with PhaseTimer('CTB route matching', phase_timings, silent):
+        ctb_route_matches = match_operator_routes_to_government_gtfs(
+            engine=engine,
+            operator_name="CTB",
+            debug=not silent
+        )
     if not silent:
         print(f"Found stop-count matches for {len(ctb_route_matches)} CTB routes.")
 
@@ -1165,42 +1768,46 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         unified_to_original_map[unified].append(original)
 
 
-    kmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('KMB', na=False)]
-    kmb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(kmb_gov_routes_df['route_id'])]
-    kmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(kmb_gov_trips_df['trip_id'])]
-    kmb_stoptimes_df = generate_stop_times_for_agency(
-        'KMB', kmb_trips_df, kmb_stoptimes_df, kmb_gov_routes_df, kmb_gov_trips_df, kmb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
-    )
+    with PhaseTimer('KMB stop_times generation', phase_timings, silent):
+        kmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('KMB', na=False)]
+        kmb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(kmb_gov_routes_df['route_id'])]
+        kmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(kmb_gov_trips_df['trip_id'])]
+        kmb_stoptimes_df = generate_stop_times_for_agency(
+            'KMB', kmb_trips_df, kmb_stoptimes_df, kmb_gov_routes_df, kmb_gov_trips_df, kmb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
+        )
 
-    ctb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('CTB', na=False)]
-    ctb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(ctb_gov_routes_df['route_id'])]
-    ctb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(ctb_gov_trips_df['trip_id'])]
-    
-    ctb_stoptimes_df = generate_stop_times_for_agency(
-        'CTB', ctb_trips_df, ctb_stoptimes_df, ctb_gov_routes_df, ctb_gov_trips_df, ctb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
-    )
+    with PhaseTimer('CTB stop_times generation', phase_timings, silent):
+        ctb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('CTB', na=False)]
+        ctb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(ctb_gov_routes_df['route_id'])]
+        ctb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(ctb_gov_trips_df['trip_id'])]
+        ctb_stoptimes_df = generate_stop_times_for_agency(
+            'CTB', ctb_trips_df, ctb_stoptimes_df, ctb_gov_routes_df, ctb_gov_trips_df, ctb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
+        )
 
-    gmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('GMB', na=False)]
-    gmb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(gmb_gov_routes_df['route_id'])]
-    gmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(gmb_gov_trips_df['trip_id'])]
-    gmb_stoptimes_df = generate_stop_times_for_agency(
-        'GMB', gmb_trips_df, gmb_stoptimes_df, gmb_gov_routes_df, gmb_gov_trips_df, gmb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
-    )
+    with PhaseTimer('GMB stop_times generation', phase_timings, silent):
+        gmb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('GMB', na=False)]
+        gmb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(gmb_gov_routes_df['route_id'])]
+        gmb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(gmb_gov_trips_df['trip_id'])]
+        gmb_stoptimes_df = generate_stop_times_for_agency(
+            'GMB', gmb_trips_df, gmb_stoptimes_df, gmb_gov_routes_df, gmb_gov_trips_df, gmb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
+        )
     print(gmb_stoptimes_df.head())
 
-    mtrbus_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('LRTFeeder', na=False)]
-    mtrbus_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(mtrbus_gov_routes_df['route_id'])]
-    mtrbus_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(mtrbus_gov_trips_df['trip_id'])]
-    mtrbus_stoptimes_df = generate_stop_times_for_agency(
-        'MTRB', mtrbus_trips_df, mtrbus_stoptimes_df, mtrbus_gov_routes_df, mtrbus_gov_trips_df, mtrbus_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
-    )
+    with PhaseTimer('MTRB stop_times generation', phase_timings, silent):
+        mtrbus_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('LRTFeeder', na=False)]
+        mtrbus_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(mtrbus_gov_routes_df['route_id'])]
+        mtrbus_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(mtrbus_gov_trips_df['trip_id'])]
+        mtrbus_stoptimes_df = generate_stop_times_for_agency(
+            'MTRB', mtrbus_trips_df, mtrbus_stoptimes_df, mtrbus_gov_routes_df, mtrbus_gov_trips_df, mtrbus_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
+        )
 
-    nlb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('NLB', na=False)]
-    nlb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(nlb_gov_routes_df['route_id'])]
-    nlb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(nlb_gov_trips_df['trip_id'])]
-    nlb_stoptimes_df = generate_stop_times_for_agency(
-        'NLB', nlb_trips_df, nlb_stoptimes_df, nlb_gov_routes_df, nlb_gov_trips_df, nlb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
-    )
+    with PhaseTimer('NLB stop_times generation', phase_timings, silent):
+        nlb_gov_routes_df = gov_routes_df[gov_routes_df['agency_id'].str.contains('NLB', na=False)]
+        nlb_gov_trips_df = gov_trips_with_route_info[gov_trips_with_route_info['route_id'].isin(nlb_gov_routes_df['route_id'])]
+        nlb_gov_frequencies_df = gov_frequencies_df[gov_frequencies_df['trip_id'].isin(nlb_gov_trips_df['trip_id'])]
+        nlb_stoptimes_df = generate_stop_times_for_agency(
+            'NLB', nlb_trips_df, nlb_stoptimes_df, nlb_gov_routes_df, nlb_gov_trips_df, nlb_gov_frequencies_df, journey_time_data, unified_to_original_map, silent=silent
+        )
 
     # --- Combine & Standardize--
     if not silent:
@@ -1219,33 +1826,95 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_routes_df['route_text_color'] = 'FFFFFF'
     all_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df, mtr_trips_df, lr_trips_df], ignore_index=True)
 
-    # Create a mapping from the original government trip_id to our new trip_id
-    trip_id_mapping = all_trips_df.merge(
-        gov_trips_with_route_info,
-        left_on=['original_service_id', 'route_short_name', 'direction_id'],
-        right_on=['service_id', 'route_short_name', 'direction_id']
-    )[['trip_id_x', 'trip_id_y']].rename(columns={'trip_id_x': 'new_trip_id', 'trip_id_y': 'original_trip_id'})
+    # Attach agency to government trips for scoping
+    gov_trips_with_route_info['route_id'] = gov_trips_with_route_info['route_id'].astype(str)
+    gov_trips_with_route_info['service_id'] = gov_trips_with_route_info['service_id'].astype(str)
+    gov_trips_with_route_info['route_short_name'] = gov_trips_with_route_info['route_short_name'].astype(str)
+    gov_trips_with_route_info.rename(columns={'agency_id': 'gov_agency_id'}, inplace=True)
 
-    # Special handling for GMB routes - their route_short_name includes region (HKI-1 vs 1)
-    gmb_trips = all_trips_df[all_trips_df['trip_id'].str.startswith('GMB-')]
-    if not gmb_trips.empty:
-        # Extract base route number from GMB route_short_name (HKI-1 -> 1)
-        gmb_trips_copy = gmb_trips.copy()
-        gmb_trips_copy['base_route_name'] = gmb_trips_copy['route_short_name'].str.split('-').str[1]
-        
-        gmb_trip_mapping = gmb_trips_copy.merge(
-            gov_trips_with_route_info,
-            left_on=['original_service_id', 'base_route_name', 'direction_id'],
-            right_on=['service_id', 'route_short_name', 'direction_id']
-        )[['trip_id_x', 'trip_id_y']].rename(columns={'trip_id_x': 'new_trip_id', 'trip_id_y': 'original_trip_id'})
-        
-        # Add GMB mappings to the main mapping
-        trip_id_mapping = pd.concat([trip_id_mapping, gmb_trip_mapping], ignore_index=True)
+    # Normalize our trips fields for safe joins
+    for col in ['original_service_id', 'route_short_name']:
+        if col in all_trips_df.columns:
+            all_trips_df[col] = all_trips_df[col].astype(str)
+    if 'gov_route_id' in all_trips_df.columns:
+        all_trips_df['gov_route_id'] = all_trips_df['gov_route_id'].astype(str)
 
-    # Update the trip_id in the frequencies dataframe
-    final_frequencies_df = gov_frequencies_df.merge(trip_id_mapping, left_on='trip_id', right_on='original_trip_id', how='inner')
+    # Map of allowed government agencies per unified operator
+    allowed_gov_by_unified = {
+        'KMB': {'KMB', 'LWB', 'KMB+CTB', 'KWB'},
+        'CTB': {'CTB', 'NWFB'},
+        'GMB': {'GMB'},
+        'MTRB': {'LRTFeeder'},
+        'NLB': {'NLB'}
+    }
+
+    def build_trip_id_mapping_for(unified_prefix: str) -> pd.DataFrame:
+        ours = all_trips_df[all_trips_df['trip_id'].str.startswith(f'{unified_prefix}-')].copy()
+        if ours.empty:
+            return pd.DataFrame(columns=['original_trip_id', 'new_trip_id'])
+
+        # Prefer exact mapping by gov_route_id when available
+        if 'gov_route_id' in ours.columns and ours['gov_route_id'].notna().any():
+            left = ours[['trip_id', 'original_service_id', 'direction_id', 'gov_route_id']].dropna()
+            left.rename(columns={'trip_id': 'new_trip_id', 'gov_route_id': 'route_id'}, inplace=True)
+            right = gov_trips_with_route_info[['trip_id', 'service_id', 'direction_id', 'route_id', 'gov_agency_id']]
+            m = left.merge(
+                right,
+                left_on=['original_service_id', 'direction_id', 'route_id'],
+                right_on=['service_id', 'direction_id', 'route_id'],
+                how='inner'
+            )
+        else:
+            # Fallback: route_short_name scoped by allowed agencies
+            allowed = allowed_gov_by_unified.get(unified_prefix, {unified_prefix})
+            left = ours[['trip_id', 'original_service_id', 'direction_id', 'route_short_name']].dropna()
+            left.rename(columns={'trip_id': 'new_trip_id'}, inplace=True)
+            right = gov_trips_with_route_info[
+                gov_trips_with_route_info['gov_agency_id'].isin(allowed)
+            ][['trip_id', 'service_id', 'direction_id', 'route_short_name', 'gov_agency_id']]
+            m = left.merge(
+                right,
+                left_on=['original_service_id', 'direction_id', 'route_short_name'],
+                right_on=['service_id', 'direction_id', 'route_short_name'],
+                how='inner'
+            )
+
+        if m.empty:
+            return pd.DataFrame(columns=['original_trip_id', 'new_trip_id'])
+
+        return m[['trip_id', 'new_trip_id']].rename(columns={'trip_id': 'original_trip_id'}).drop_duplicates()
+
+    # Build and combine mappings for relevant agencies
+    mappings = [
+        build_trip_id_mapping_for('KMB'),
+        build_trip_id_mapping_for('CTB'),
+        build_trip_id_mapping_for('GMB'),
+        build_trip_id_mapping_for('MTRB'),
+        build_trip_id_mapping_for('NLB')
+    ]
+    trip_id_mapping = pd.concat([m for m in mappings if m is not None and not m.empty], ignore_index=True).drop_duplicates()
+
+    # Update the trip_id in the frequencies dataframe using scoped mapping
+    final_frequencies_df = gov_frequencies_df.merge(
+        trip_id_mapping,
+        left_on='trip_id',
+        right_on='original_trip_id',
+        how='inner'
+    )
     final_frequencies_df['trip_id'] = final_frequencies_df['new_trip_id']
     final_frequencies_df = final_frequencies_df.drop(columns=['new_trip_id', 'original_trip_id'])
+
+    fallback_frequencies_df = generate_frequencies_from_schedule(
+        trip_id_mapping,
+        final_frequencies_df,
+        gov_stop_times_df,
+        silent=silent
+    )
+    if not fallback_frequencies_df.empty:
+        final_frequencies_df = pd.concat([final_frequencies_df, fallback_frequencies_df], ignore_index=True)
+        if not silent:
+            missing_trip_count = fallback_frequencies_df['trip_id'].nunique()
+            print(f"Generated fallback frequencies for {missing_trip_count} trip(s) using schedule-derived headways.")
 
     # --- MTR/LR Frequencies ---
     try:
@@ -1376,6 +2045,141 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         if filtered_count > 0:
             print(f"Warning: Removed {filtered_count} stop_times records that referenced non-existent stops.")
 
+    # --- Government direction inversion warnings ---
+    try:
+        if not silent:
+            print("Checking for government direction inversions (start/end mismatches)...")
+
+        # Build operator first/last stop coordinates per unified trip
+        opst = final_stop_times_output_df.copy()
+        opst = opst.sort_values(['trip_id', 'stop_sequence'])
+        first_stops = opst.groupby('trip_id').first().reset_index()[['trip_id', 'stop_id']].rename(columns={'stop_id': 'first_stop_id'})
+        last_stops = opst.groupby('trip_id').last().reset_index()[['trip_id', 'stop_id']].rename(columns={'stop_id': 'last_stop_id'})
+        op_endpoints = first_stops.merge(last_stops, on='trip_id', how='inner')
+
+        stops_coords = all_stops_output_df[['stop_id', 'stop_lat', 'stop_lon']].copy()
+        op_endpoints = (
+            op_endpoints
+            .merge(stops_coords.add_prefix('first_'), left_on='first_stop_id', right_on='first_stop_id', how='left')
+            .merge(stops_coords.add_prefix('last_'), left_on='last_stop_id', right_on='last_stop_id', how='left')
+        )
+
+        # Build government first/last stop coordinates per original gov trip
+        if 'original_trip_id' in locals() or 'trip_id_mapping' in locals():
+            timap = trip_id_mapping.copy()
+            timap.columns = [c.lower() for c in timap.columns]
+            if {'new_trip_id', 'original_trip_id'}.issubset(timap.columns):
+                gov_needed = timap['original_trip_id'].dropna().unique().tolist()
+                if gov_needed:
+                    # Read only required gov stop_times rows
+                    qids = "','".join(gov_needed)
+                    gov_st = pd.read_sql(f"SELECT trip_id, stop_id, stop_sequence FROM gov_gtfs_stop_times WHERE trip_id IN ('{qids}')", engine)
+                    gov_st = gov_st.sort_values(['trip_id', 'stop_sequence'])
+                    gov_first = gov_st.groupby('trip_id').first().reset_index().rename(columns={'stop_id': 'gov_first_stop_id'})
+                    gov_last = gov_st.groupby('trip_id').last().reset_index().rename(columns={'stop_id': 'gov_last_stop_id'})
+                    gov_endpoints = gov_first.merge(gov_last, on='trip_id', how='inner')
+                    gov_stops = pd.read_sql("SELECT stop_id, stop_lat, stop_lon FROM gov_gtfs_stops", engine)
+                    gov_endpoints = (
+                        gov_endpoints
+                        .merge(gov_stops.add_prefix('gov_first_'), left_on='gov_first_stop_id', right_on='gov_first_stop_id', how='left')
+                        .merge(gov_stops.add_prefix('gov_last_'), left_on='gov_last_stop_id', right_on='gov_last_stop_id', how='left')
+                    )
+                    # Combine mapping with endpoints
+                    combo = (
+                        timap.merge(op_endpoints, left_on='new_trip_id', right_on='trip_id', how='inner')
+                             .merge(gov_endpoints, left_on='original_trip_id', right_on='trip_id', how='inner', suffixes=('', '_gov'))
+                    )
+
+                    def haversine(lat1, lon1, lat2, lon2):
+                        import math
+                        if pd.isna(lat1) or pd.isna(lon1) or pd.isna(lat2) or pd.isna(lon2):
+                            return float('inf')
+                        R = 6371000.0
+                        dlat = math.radians(lat2 - lat1)
+                        dlon = math.radians(lon2 - lon1)
+                        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2)**2
+                        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+                    # Vectorized candidate inversion detection
+                    import numpy as np
+                    if not combo.empty:
+                        # Extract coordinate arrays
+                        f_lat = combo['first_stop_lat'].to_numpy()
+                        f_lon = combo['first_stop_lon'].to_numpy()
+                        l_lat = combo['last_stop_lat'].to_numpy()
+                        l_lon = combo['last_stop_lon'].to_numpy()
+                        gf_lat = combo['gov_first_stop_lat'].to_numpy()
+                        gf_lon = combo['gov_first_stop_lon'].to_numpy()
+                        gl_lat = combo['gov_last_stop_lat'].to_numpy()
+                        gl_lon = combo['gov_last_stop_lon'].to_numpy()
+
+                        def haversine_vec(a_lat, a_lon, b_lat, b_lon):
+                            mask_valid = (~pd.isna(a_lat)) & (~pd.isna(a_lon)) & (~pd.isna(b_lat)) & (~pd.isna(b_lon))
+                            res = np.full_like(a_lat, fill_value=np.inf, dtype='float64')
+                            if mask_valid.any():
+                                R = 6371000.0
+                                dlat = np.radians(b_lat[mask_valid] - a_lat[mask_valid])
+                                dlon = np.radians(b_lon[mask_valid] - a_lon[mask_valid])
+                                lat1 = np.radians(a_lat[mask_valid])
+                                lat2 = np.radians(b_lat[mask_valid])
+                                aa = np.sin(dlat/2)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2)**2
+                                res_valid = R * 2 * np.arctan2(np.sqrt(aa), np.sqrt(1-aa))
+                                res[mask_valid] = res_valid
+                            return res
+
+                        aligned = haversine_vec(f_lat, f_lon, gf_lat, gf_lon) + haversine_vec(l_lat, l_lon, gl_lat, gl_lon)
+                        reversed_sum = haversine_vec(f_lat, f_lon, gl_lat, gl_lon) + haversine_vec(l_lat, l_lon, gf_lat, gf_lon)
+
+                        candidates_mask = reversed_sum + 200 < aligned
+                        if candidates_mask.any():
+                            wdf = pd.DataFrame({
+                                'unified_trip_id': combo.loc[candidates_mask, 'new_trip_id'].values,
+                                'gov_trip_id': combo.loc[candidates_mask, 'original_trip_id'].values,
+                                'aligned_total_m': aligned[candidates_mask].astype(int),
+                                'reversed_total_m': reversed_sum[candidates_mask].astype(int)
+                            })
+                        else:
+                            wdf = pd.DataFrame()
+                    else:
+                        wdf = pd.DataFrame()
+
+                    if not wdf.empty:
+                        # Auto-invert if reversed_total_m < 500 (heuristic threshold)
+                        auto_invert_ids = wdf[wdf['reversed_total_m'] >= 0][wdf['reversed_total_m'] < 500]['unified_trip_id'].tolist()
+                        if auto_invert_ids:
+                            if not silent:
+                                print(f"Auto-inverting direction for {len(auto_invert_ids)} trip(s) (reversed_total_m < 500).")
+                            def swap_bound(val: str) -> str:
+                                if not isinstance(val, str):
+                                    return val
+                                low = val.lower()
+                                if low == 'o' or low == 'outbound':
+                                    return 'I' if val.isupper() else ('inbound' if low == 'outbound' else 'I')
+                                if low == 'i' or low == 'inbound':
+                                    return 'O' if val.isupper() else ('outbound' if low == 'inbound' else 'O')
+                                return val
+                            # Update final_trips_df direction_id & bound (if present) IN-PLACE
+                            mask = final_trips_df['trip_id'].isin(auto_invert_ids)
+                            if 'direction_id' in final_trips_df.columns:
+                                final_trips_df.loc[mask, 'direction_id'] = final_trips_df.loc[mask, 'direction_id'].apply(lambda d: 1 - int(d) if pd.notna(d) and str(d).isdigit() else d)
+                            for bcol in ['bound', 'dir']:
+                                if bcol in final_trips_df.columns:
+                                    final_trips_df.loc[mask, bcol] = final_trips_df.loc[mask, bcol].apply(swap_bound)
+                            # Mark actions
+                            wdf['action'] = wdf['unified_trip_id'].apply(lambda x: 'AUTO_INVERTED' if x in auto_invert_ids else 'WARN_ONLY')
+                        else:
+                            wdf['action'] = 'WARN_ONLY'
+                        warn_path = os.path.join(final_output_dir, 'warnings_direction_inversions.txt')
+                        wdf.to_csv(warn_path, index=False)
+                        if not silent:
+                            print(f"Direction inversion warnings written: {len(wdf)} (auto-inverted {wdf[wdf['action']=='AUTO_INVERTED'].shape[0]}) -> {warn_path}")
+                    else:
+                        if not silent:
+                            print("No direction inversion cases detected.")
+    except Exception as e:
+        if not silent:
+            print(f"Warning: direction inversion check failed: {e}")
+
     # --- Shapes --- 
     if not silent:
         print("Generating shapes from CSDI data...")
@@ -1397,8 +2201,17 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     if success:
         final_trips_df = match_trips_to_csdi_shapes(final_trips_df, shape_info, engine, silent=silent)
 
-    # Standardize trips.txt output
-    final_trips_df['trip_headsign'] = ''  # Add empty column as per GTFS spec
+    # Standardize trips.txt output & add headsigns
+    if not silent:
+        print("Generating trip headsigns (EN)...")
+    with PhaseTimer('Headsigns', phase_timings, silent):
+        final_trips_df = generate_trip_headsigns(engine, final_trips_df, silent=silent)
+    final_trips_df['trip_headsign_tc'] = generate_trip_headsigns_tc(
+        engine,
+        final_trips_df,
+        english_headsigns=final_trips_df.get('trip_headsign'),
+        silent=silent
+    )
     gtfs_trips_cols = ['route_id', 'service_id', 'trip_id', 'trip_headsign', 'direction_id', 'shape_id']
     # Ensure all columns exist, fill with None if they don't
     for col in gtfs_trips_cols:
@@ -1407,15 +2220,17 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_trips_output_df = final_trips_df[gtfs_trips_cols]
 
 
-    final_routes_df.to_csv(os.path.join(final_output_dir, 'routes.txt'), index=False)
-    final_trips_output_df.to_csv(os.path.join(final_output_dir, 'trips.txt'), index=False)
-    final_stop_times_output_df.to_csv(os.path.join(final_output_dir, 'stop_times.txt'), index=False)
+    with PhaseTimer('Write core tables', phase_timings, silent):
+        final_routes_df.to_csv(os.path.join(final_output_dir, 'routes.txt'), index=False)
+        final_trips_output_df.to_csv(os.path.join(final_output_dir, 'trips.txt'), index=False)
+        final_stop_times_output_df.to_csv(os.path.join(final_output_dir, 'stop_times.txt'), index=False)
 
     # Resolve overlapping frequencies before saving
     final_frequencies_df = resolve_overlapping_frequencies(final_frequencies_df)
     frequencies_cols = ['trip_id', 'start_time', 'end_time', 'headway_secs']
     final_frequencies_output_df = final_frequencies_df[frequencies_cols]
-    final_frequencies_output_df.to_csv(os.path.join(final_output_dir, 'frequencies.txt'), index=False)
+    with PhaseTimer('Write frequencies', phase_timings, silent):
+        final_frequencies_output_df.to_csv(os.path.join(final_output_dir, 'frequencies.txt'), index=False)
 
     # --- Pathways & Transfers (MTR Entrances to Stations) ---
     try:
@@ -1524,8 +2339,9 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_calendar_dates_df = final_calendar_dates_df.drop_duplicates(subset=['service_id', 'date'])
 
 
-    final_calendar_df.to_csv(os.path.join(final_output_dir, 'calendar.txt'), index=False)
-    final_calendar_dates_df.to_csv(os.path.join(final_output_dir, 'calendar_dates.txt'), index=False)
+    with PhaseTimer('Write calendar', phase_timings, silent):
+        final_calendar_df.to_csv(os.path.join(final_output_dir, 'calendar.txt'), index=False)
+        final_calendar_dates_df.to_csv(os.path.join(final_output_dir, 'calendar_dates.txt'), index=False)
 
     ## --- Translations (Traditional Chinese) ---
     if not silent:
@@ -1560,12 +2376,31 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         if 'nlb_stops_gdf' in locals() and 'stopName_c' in nlb_stops_gdf.columns:
             for r in nlb_stops_gdf[['stop_id','stopName_c']].dropna().itertuples():
                 translations.append({'table_name':'stops.txt','field_name':'stop_name','language':lang_tc,'record_id':r.stop_id,'translation':r.stopName_c})
-        if 'mtr_stations_gdf' in locals() and 'Chinese Name' in mtr_stations_gdf.columns:
-            for r in (mtr_stations_gdf[['Station Code','Chinese Name']].drop_duplicates('Station Code').dropna().itertuples()):
-                translations.append({'table_name':'stops.txt','field_name':'stop_name','language':lang_tc,'record_id':f"MTR-{r.Station_Code}",'translation':r.Chinese_Name})
+        if 'mtr_stations_gdf' in locals() and {'Station Code','Chinese Name'}.issubset(mtr_stations_gdf.columns):
+            station_names_df = (
+                mtr_stations_gdf[['Station Code', 'Chinese Name']]
+                .rename(columns={'Station Code': 'station_code', 'Chinese Name': 'name_tc'})
+                .dropna(subset=['station_code', 'name_tc'])
+                .drop_duplicates(subset=['station_code'])
+            )
+            for r in station_names_df.itertuples(index=False):
+                name_tc = str(r.name_tc).strip()
+                if name_tc:
+                    translations.append({
+                        'table_name': 'stops.txt',
+                        'field_name': 'stop_name',
+                        'language': lang_tc,
+                        'record_id': f"MTR-{r.station_code}",
+                        'translation': name_tc
+                    })
         if 'mtr_exits_gdf' in locals() and 'station_name_zh' in mtr_exits_gdf.columns:
             for r in mtr_exits_gdf[['stop_id','station_name_zh','exit']].dropna(subset=['station_name_zh']).itertuples():
                 translations.append({'table_name':'stops.txt','field_name':'stop_name','language':lang_tc,'record_id':r.stop_id,'translation':f"{r.station_name_zh} 出口 {r.exit}"})
+        if 'mtrbus_stops_gdf' in locals() and 'name_zh' in mtrbus_stops_gdf.columns:
+            for r in mtrbus_stops_gdf[['stop_id','name_zh']].dropna(subset=['name_zh']).itertuples():
+                name_tc = str(r.name_zh).strip()
+                if name_tc:
+                    translations.append({'table_name':'stops.txt','field_name':'stop_name','language':lang_tc,'record_id':r.stop_id,'translation':name_tc})
         if 'lr_stops_gdf' in locals() and 'name_tc' in lr_stops_gdf.columns:
             for r in lr_stops_gdf[['stop_id','name_tc']].dropna().itertuples():
                 translations.append({'table_name':'stops.txt','field_name':'stop_name','language':lang_tc,'record_id':r.stop_id,'translation':r.name_tc})
@@ -1618,10 +2453,28 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     except Exception as e:
         if not silent:
             print(f"Route translations warning: {e}")
+
+    # Trip headsign translations
+    try:
+        if 'final_trips_df' in locals() and 'trip_headsign_tc' in final_trips_df.columns:
+            trip_tc = final_trips_df[['trip_id', 'trip_headsign_tc']].dropna(subset=['trip_id'])
+            trip_tc = trip_tc[trip_tc['trip_headsign_tc'].astype(str).str.strip() != '']
+            for r in trip_tc.itertuples(index=False):
+                translations.append({
+                    'table_name': 'trips.txt',
+                    'field_name': 'trip_headsign',
+                    'language': lang_tc,
+                    'record_id': r.trip_id,
+                    'translation': r.trip_headsign_tc
+                })
+    except Exception as e:
+        if not silent:
+            print(f"Trip headsign translations warning: {e}")
     
     if translations:
         translations_df = pd.DataFrame(translations).drop_duplicates(subset=['table_name','field_name','language','record_id'])
-        translations_df.to_csv(os.path.join(final_output_dir,'translations.txt'), index=False)
+        with PhaseTimer('Write translations', phase_timings, silent):
+            translations_df.to_csv(os.path.join(final_output_dir,'translations.txt'), index=False)
         if not silent:
             print(f"Generated translations.txt with {len(translations_df)} records.")
     else:
@@ -1631,11 +2484,16 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     if not silent:
         print("Zipping the unified GTFS feed...")
     zip_path = os.path.join(output_dir, 'unified-agency-specific-stops.gtfs.zip')
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for filename in os.listdir(final_output_dir):
-            zf.write(os.path.join(final_output_dir, filename), arcname=filename)
+    with PhaseTimer('Zip feed', phase_timings, silent):
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for filename in os.listdir(final_output_dir):
+                zf.write(os.path.join(final_output_dir, filename), arcname=filename)
 
     # i'll implament gtfs dense encoding later
 
     if not silent:
         print(f"--- Unified GTFS Build Complete. Output at {zip_path} ---")
+        timings_path = os.path.join(final_output_dir, 'build_timings.json')
+        with open(timings_path, 'w') as tf:
+            json.dump(phase_timings, tf, indent=2)
+        print(f"Timing details written to {timings_path}")

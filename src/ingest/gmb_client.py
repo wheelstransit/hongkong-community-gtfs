@@ -30,9 +30,9 @@ class GMBClient:
                     if not self.silent:
                         print(f"HTTP {response.status_code} error for {url}. Attempt {attempt + 1}/{max_retries}")
                     if attempt < max_retries - 1:
-                        wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
+                        wait_time = 240 if attempt == 0 else 30
                         if not self.silent:
-                            print(f"Waiting {wait_time:.2f} seconds before retry...")
+                            print(f"Waiting {wait_time} seconds before retry...")
                         time.sleep(wait_time)
                     continue
 
@@ -40,9 +40,9 @@ class GMBClient:
                 if not self.silent:
                     print(f"Request exception for {url}: {e}. Attempt {attempt + 1}/{max_retries}")
                 if attempt < max_retries - 1:
-                    wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
+                    wait_time = 240 if attempt == 0 else 30
                     if not self.silent:
-                        print(f"Waiting {wait_time:.2f} seconds before retry...")
+                        print(f"Waiting {wait_time} seconds before retry...")
                     time.sleep(wait_time)
                 continue
             except (json.JSONDecodeError, KeyError):
@@ -110,8 +110,8 @@ class GMBClient:
             if not silent:
                 print("Could not fetch initial route list. Aborting.")
             return [], []
-
         all_route_stops = []
+        route_directions = []  # capture per-direction origin/destination data
         unique_stop_ids = set()
 
         tasks = []
@@ -149,6 +149,32 @@ class GMBClient:
                     route_seq = direction.get('route_seq')
                     if not route_seq:
                         continue
+                    # Collect direction metadata (orig/dest in EN + TC + SC)
+                    orig_en = (direction.get('orig_en') or '').strip()
+                    dest_en = (direction.get('dest_en') or '').strip()
+                    orig_tc = (direction.get('orig_tc') or '').strip()
+                    dest_tc = (direction.get('dest_tc') or '').strip()
+                    orig_sc = (direction.get('orig_sc') or '').strip()
+                    dest_sc = (direction.get('dest_sc') or '').strip()
+                    circular_flag = False
+                    for txt in [dest_en.lower(), dest_tc, dest_sc]:
+                        if txt and any(token in txt.lower() for token in ['circular', '循環', '环线', '循環線', '循環線)', '循環線)']):
+                            circular_flag = True
+                            break
+                    route_directions.append({
+                        'route_id': route_id,
+                        'route_seq': route_seq,
+                        'region': region,
+                        'route_code': route_code,
+                        'orig_en': orig_en,
+                        'dest_en': dest_en,
+                        'orig_tc': orig_tc,
+                        'dest_tc': dest_tc,
+                        'orig_sc': orig_sc,
+                        'dest_sc': dest_sc,
+                        'is_circular': circular_flag,
+                        'variant_description_en': desc_en,
+                    })
 
                     route_stops_data = self.get_route_stops(route_id, route_seq)
                     if not route_stops_data or 'route_stops' not in route_stops_data:
@@ -206,22 +232,24 @@ class GMBClient:
                     all_stops_details.append(stop_details)
         if not silent:
             print(f"\nsuccessfully fetched details for {len(all_stops_details)} unique stops.")
-        return all_stops_details, all_route_stops
+        return all_stops_details, all_route_stops, route_directions
 
 
 
 if __name__ == '__main__':
     client = GMBClient()
-    all_stops, all_route_stops = client.get_all_stops_and_route_stops(max_workers=10)
+    all_stops, all_route_stops, route_dirs = client.get_all_stops_and_route_stops(max_workers=10)
 
     # summary
     print(f"total unique stops with details: {len(all_stops)}")
     print(f"total route-stop records: {len(all_route_stops)}")
+    print(f"total route direction records: {len(route_dirs)}")
 
     if all_stops:
         # sample stop data
         print(json.dumps(all_stops[0], indent=2, ensure_ascii=False))
 
     if all_route_stops:
-        # sample route-stop record
         print(json.dumps(all_route_stops[0], indent=2, ensure_ascii=False))
+    if route_dirs:
+        print(json.dumps(route_dirs[0], indent=2, ensure_ascii=False))

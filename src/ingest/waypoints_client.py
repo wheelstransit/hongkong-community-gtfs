@@ -17,6 +17,18 @@ from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO)
 
+def _ensure_clean_directory(path: str):
+    os.makedirs(path, exist_ok=True)
+    for name in os.listdir(path):
+        target = os.path.join(path, name)
+        try:
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target)
+            else:
+                os.unlink(target)
+        except Exception as e:
+            logging.warning(f"Could not remove {target}: {e}")
+
 def store_version(key: str, version: str):
     """Store version information for a dataset."""
     logging.info(f"{key} version: {version}")
@@ -151,9 +163,7 @@ def fetch_csdi_waypoints_data(force_ingest=False, silent=False):
     if not silent:
         logging.info("Fetching waypoints data from CSDI and static sources...")
 
-    if os.path.exists("waypoints"):
-        shutil.rmtree("waypoints")
-    os.makedirs("waypoints")
+    _ensure_clean_directory("waypoints")
 
     csdi_datasets = [
         {"name": "bus", "id": "td_rcd_1638844988873_41214"},

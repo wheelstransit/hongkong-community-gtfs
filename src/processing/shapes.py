@@ -3,6 +3,8 @@ import os
 import json
 from math import radians, sin, cos, sqrt, atan2
 from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from .perf import resolve_parallel_config
 
 def lat_long_dist(lat1, lon1, lat2, lon2):
     lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
@@ -12,6 +14,45 @@ def lat_long_dist(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
     r = 6371
     return c * r * 1000
+
+def _process_shape_file(args):
+    filename, waypoints_dir = args
+    base_filename = os.path.splitext(filename)[0]
+    try:
+        gov_gtfs_id, bound = base_filename.split('-')
+    except ValueError:
+        return filename, [], None  # skip malformed
+    filepath = os.path.join(waypoints_dir, filename)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return filename, [], None
+    if not data.get('features'):
+        return filename, [], None
+    feature = data['features'][0]
+    properties = feature['properties']
+    geom_type = feature['geometry']['type']
+    coords = feature['geometry']['coordinates']
+    if geom_type == 'MultiLineString':
+        all_coords = [item for sublist in coords for item in sublist]
+    else:
+        all_coords = coords
+    rows = []
+    dist_traveled = 0
+    prev_lat = prev_lon = None
+    shape_id = f"CSDI-{base_filename}"
+    for i, (lon, lat) in enumerate(all_coords):
+        if prev_lat is not None:
+            dist_traveled += lat_long_dist(prev_lat, prev_lon, lat, lon)
+        rows.append((shape_id, lat, lon, i+1, dist_traveled))
+        prev_lat, prev_lon = lat, lon
+    meta = {
+        'shape_id': shape_id,
+        'gov_route_id': properties.get('ROUTE_ID'),
+        'bound': bound
+    }
+    return filename, rows, meta
 
 def generate_shapes_from_csdi_files(output_path, engine, silent=False, gov_route_ids=None):
     waypoints_dir = "waypoints"
@@ -25,57 +66,28 @@ def generate_shapes_from_csdi_files(output_path, engine, silent=False, gov_route
     if gov_route_ids:
         files_to_process = [f for f in files_to_process if f.split('-')[0] in gov_route_ids]
     
+    enabled, workers = resolve_parallel_config()
+    results = []
+    if enabled and len(files_to_process) > 1:
+        if not silent:
+            print(f"Parallel shape processing enabled (workers={workers})...")
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            fut_map = {ex.submit(_process_shape_file, (fn, waypoints_dir)): fn for fn in files_to_process}
+            for fut in tqdm(as_completed(fut_map), total=len(fut_map), desc="Generating shapes from CSDI files", unit="file", disable=silent):
+                results.append(fut.result())
+    else:
+        for fn in tqdm(files_to_process, desc="Generating shapes from CSDI files", unit="file", disable=silent):
+            results.append(_process_shape_file((fn, waypoints_dir)))
+
+    # Deterministic ordering
+    results.sort(key=lambda x: x[0])
     with open(output_path, 'w') as f_out:
         f_out.write("shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled\n")
-
-        for filename in tqdm(files_to_process, desc="Generating shapes from CSDI files", unit="file", disable=silent):
-            filepath = os.path.join(waypoints_dir, filename)
-            
-            try:
-                base_filename = os.path.splitext(filename)[0]
-                gov_gtfs_id, bound = base_filename.split('-')
-            except ValueError:
-                if not silent:
-                    print(f"Warning: Could not parse filename {filename}")
-                continue
-
-            with open(filepath, 'r', encoding='utf-8') as f:
-                try:
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    if not silent:
-                        print(f"Warning: Could not decode JSON from {filename}")
-                    continue
-
-            if not data.get('features'):
-                continue
-
-            feature = data['features'][0]
-            properties = feature['properties']
-            
-            shape_id = f"CSDI-{gov_gtfs_id}-{bound}"
-
-            geom_type = feature['geometry']['type']
-            coords = feature['geometry']['coordinates']
-
-            if geom_type == 'MultiLineString':
-                all_coords = [item for sublist in coords for item in sublist]
-            else:
-                all_coords = coords
-
-            dist_traveled = 0
-            prev_lat, prev_lon = None, None
-            for i, (lon, lat) in enumerate(all_coords):
-                if prev_lat is not None:
-                    dist_traveled += lat_long_dist(prev_lat, prev_lon, lat, lon)
-                f_out.write(f"{shape_id},{lat},{lon},{i+1},{dist_traveled}\n")
-                prev_lat, prev_lon = lat, lon
-
-            shape_info_list.append({
-                'shape_id': shape_id,
-                'gov_route_id': properties.get('ROUTE_ID'),
-                'bound': bound
-            })
+        for _, rows, meta in results:
+            for shape_id, lat, lon, seq, dist in rows:
+                f_out.write(f"{shape_id},{lat},{lon},{seq},{dist}\n")
+            if meta:
+                shape_info_list.append(meta)
 
     gov_route_ids_in_shapes = [str(s['gov_route_id']) for s in shape_info_list]
     gov_routes_df = pd.read_sql(f"SELECT route_id, agency_id FROM gov_gtfs_routes WHERE route_id IN ({','.join(gov_route_ids_in_shapes)})", engine)
@@ -237,18 +249,26 @@ def _fallback_shape_matching(trips_df, shape_info_df, engine, silent=False):
     if not trips_for_fallback.empty:
         # Add government agency filter based on trip agency
         gov_df_filtered_list = []
-        for trip_agency, gov_agencies in agency_mapping.items():
+        from tqdm import tqdm
+        agency_items = list(agency_mapping.items())
+        iterator = agency_items
+        if not silent:
+            iterator = tqdm(agency_items, desc="Fallback agency matching", unit="agency", leave=False)
+        for trip_agency, gov_agencies in iterator:
             trip_subset = trips_for_fallback[trips_for_fallback['trip_agency'] == trip_agency]
-            if not trip_subset.empty:
-                gov_subset = gov_df[gov_df['agency_id'].isin(gov_agencies)]
-                if not gov_subset.empty:
-                    merged_subset = trip_subset.merge(
-                        gov_subset,
-                        left_on=['original_service_id', 'route_short_name', 'direction_id'],
-                        right_on=['service_id', 'route_short_name', 'direction_id'],
-                        suffixes=('', '_gov')
-                    )
-                    gov_df_filtered_list.append(merged_subset)
+            if trip_subset.empty:
+                continue
+            gov_subset = gov_df[gov_df['agency_id'].isin(gov_agencies)]
+            if gov_subset.empty:
+                continue
+            merged_subset = trip_subset.merge(
+                gov_subset,
+                left_on=['original_service_id', 'route_short_name', 'direction_id'],
+                right_on=['service_id', 'route_short_name', 'direction_id'],
+                suffixes=('', '_gov')
+            )
+            if not merged_subset.empty:
+                gov_df_filtered_list.append(merged_subset)
         
         if gov_df_filtered_list:
             trip_to_gov_route_map_fallback = pd.concat(gov_df_filtered_list, ignore_index=True)
@@ -394,7 +414,11 @@ def _validate_and_correct_shape_directions(trips_df, engine, silent=False):
     
     corrections_made = 0
     
-    for _, route_info in routes_with_shapes.iterrows():
+    from tqdm import tqdm
+    iterator = routes_with_shapes.iterrows()
+    if not silent:
+        iterator = tqdm(routes_with_shapes.iterrows(), total=len(routes_with_shapes), desc="Validate shape directions", unit="route", leave=False)
+    for _, route_info in iterator:
         route_name = route_info['route_short_name']
         direction_id = route_info['direction_id']
         current_shape_id = route_info['shape_id']
@@ -548,15 +572,16 @@ def _should_correct_shape_direction(route_name, bound, gov_route_id, agency_id, 
     threshold = 500  # 500 meters threshold
     should_correct = inverted_alignment < (correct_alignment - threshold)
     
-    if not silent and agency_id == 'CTB':
-        print(f"DEBUG: CTB-{route_name}-{bound}: correct_alignment={correct_alignment}, inverted_alignment={inverted_alignment}, should_correct={should_correct}")
+    #if not silent and agency_id == 'CTB':
+        #print(f"DEBUG: CTB-{route_name}-{bound}: correct_alignment={correct_alignment}, inverted_alignment={inverted_alignment}, should_correct={should_correct}")
 
-    if not silent and should_correct:
-        print(f"    Route {agency_id}-{route_name}-{bound}: Shape appears inverted")
-        print(f"      Correct alignment distance: {correct_alignment:.0f}m")
-        print(f"      Inverted alignment distance: {inverted_alignment:.0f}m")
-        print(f"      First stop: {first_stop['stop_name_en']}")
-        print(f"      Last stop: {last_stop['stop_name_en']}")
+    #if not silent and should_correct:
+        #print(f"    Route {agency_id}-{route_name}-{bound}: Shape appears inverted")
+        #print(f"      Correct alignment distance: {correct_alignment:.0f}m")
+        #print(f"      Inverted alignment distance: {inverted_alignment:.0f}m")
+        #print(f"      First stop: {first_stop['stop_name_en']}")
+        #print(f"      Last stop: {last_stop['stop_name_en']}")
+        
     
     return should_correct
 

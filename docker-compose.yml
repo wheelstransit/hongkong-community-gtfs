@@ -22,7 +22,8 @@ services:
       - DATABASE_URL=postgresql://user:password@db:5432/gtfs_hk
     volumes:
       - ./output:/app/output:z
-      - cache_data:/app/.cache:z
+      - ./.cache:/app/.cache:z
+      - ./waypoints:/app/waypoints:z
     networks:
       - gtfs_network
 
@@ -31,4 +32,3 @@ networks:
 
 volumes:
   pg_data:
-  cache_data:

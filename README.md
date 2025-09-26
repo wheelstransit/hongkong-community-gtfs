@@ -1,3 +1,7 @@
+CTB ROUTE MDB ingestion
+- The pipeline fetches TD's `ROUTE_BUS.mdb` to map Citybus routes to government `route_id` without fuzzy matching.
+- Requires `mdbtools` (for `mdb-export`) available in the runtime environment.
+- If missing, install in Debian/Ubuntu: `apt-get update && apt-get install -y mdbtools`.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/logomark-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="images/logomark-light.png">

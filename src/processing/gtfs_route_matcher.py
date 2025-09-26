@@ -192,42 +192,45 @@ def find_best_matches(operator_routes: pd.DataFrame,
     }
     valid_agencies = same_agency_map.get(operator_name, [operator_name])
 
-    for _, op_route in tqdm(operator_routes.iterrows(), 
-                           total=len(operator_routes), 
-                           desc="Finding route matches", 
-                           unit="routes"):
-        for _, gov_route in gov_routes.iterrows():
-            # Only match if route number and direction match
-            if (op_route['route'] == gov_route['route_short_name']):
-                # Enforce bound alignment for KMB to guarantee O=1 and I=2 mapping
-                if operator_name == 'KMB' and op_route.get('bound') != gov_route.get('bound'):
-                    continue
-                # Skip special route variants for better matching
-                route_long_name = str(gov_route.get('route_long_name', ''))
-                if any(keyword in route_long_name.upper() for keyword in ['VIA', 'OMIT', 'SPECIAL', 'EXPRESS', 'SERVICE', 'CORRECTIONAL', 'HOSPITAL', 'SCHOOL']):
-                    continue
-                stop_diff = abs(op_route['stop_count'] - gov_route['stop_count'])
-                if stop_diff <= max_stop_diff:
-                    if gov_route['agency_id'] in valid_agencies:
-                        match_record = {
-                            'route_key': op_route['route_key'],
-                            'operator_route': op_route['route'],
-                            'operator_bound': op_route['bound'],
-                            'operator_service_type': op_route['service_type'],
-                            'operator_stops': op_route['stop_count'],
-                            'gov_route_id': gov_route['route_id'],
-                            'gov_route_name': gov_route['route_short_name'],
-                            'gov_bound': gov_route['bound'],
-                            'gov_stops': gov_route['stop_count'],
-                            'gov_agency': gov_route['agency_id'],
-                            'gov_service_id': gov_route['service_id'],
-                            'stop_diff': stop_diff,
-                            'gov_route_long_name': gov_route.get('route_long_name', '')
-                        }
-                        # Preserve operator routeid for NLB (used later in export)
-                        if 'routeid' in op_route.index:
-                            match_record['routeid'] = op_route['routeid']
-                        potential_matches.append(match_record)
+    # Pre-group government routes by route_short_name to reduce inner scans while keeping logic identical
+    gov_grouped = {k: v for k, v in gov_routes.groupby('route_short_name')}
+
+    for op in tqdm(operator_routes.itertuples(index=False), total=len(operator_routes), desc="Finding route matches", unit="routes"):
+        candidate_gov = gov_grouped.get(op.route, [])
+        if len(candidate_gov) == 0:
+            continue
+        # Iterate over subset only
+        for gov in candidate_gov.itertuples(index=False):
+            # Direction enforcement for KMB
+            if operator_name == 'KMB' and getattr(op, 'bound', None) != getattr(gov, 'bound', None):
+                continue
+            route_long_name = str(getattr(gov, 'route_long_name', '') or '')
+            if any(keyword in route_long_name.upper() for keyword in ['VIA', 'OMIT', 'SPECIAL', 'EXPRESS', 'SERVICE', 'CORRECTIONAL', 'HOSPITAL', 'SCHOOL']):
+                continue
+            stop_diff = abs(getattr(op, 'stop_count') - getattr(gov, 'stop_count'))
+            if stop_diff > max_stop_diff:
+                continue
+            if getattr(gov, 'agency_id') not in valid_agencies:
+                continue
+            match_record = {
+                'route_key': getattr(op, 'route_key'),
+                'operator_route': getattr(op, 'route'),
+                'operator_bound': getattr(op, 'bound'),
+                'operator_service_type': getattr(op, 'service_type'),
+                'operator_stops': getattr(op, 'stop_count'),
+                'gov_route_id': getattr(gov, 'route_id'),
+                'gov_route_name': getattr(gov, 'route_short_name'),
+                'gov_bound': getattr(gov, 'bound'),
+                'gov_stops': getattr(gov, 'stop_count'),
+                'gov_agency': getattr(gov, 'agency_id'),
+                'gov_service_id': getattr(gov, 'service_id'),
+                'stop_diff': stop_diff,
+                'gov_route_long_name': route_long_name
+            }
+            # Preserve operator routeid for NLB
+            if hasattr(op, 'routeid'):
+                match_record['routeid'] = getattr(op, 'routeid')
+            potential_matches.append(match_record)
     
     # Group by route_key and keep only the best matches (lowest stop_diff) for each route
     if potential_matches:
@@ -482,8 +485,8 @@ def find_best_match_for_nlb_route(operator_route_variants: pd.DataFrame, gov_rou
     """
     Finds the best government GTFS route match for a single operator route.
     """
-    op_outbound = operator_route_variants[operator_routeVariants['bound'] == 'O']
-    op_inbound = operator_route_variants[operator_routeVariants['bound'] == 'I']
+    op_outbound = operator_route_variants[operator_route_variants['bound'] == 'O']
+    op_inbound = operator_route_variants[operator_route_variants['bound'] == 'I']
 
     if op_outbound.empty or op_inbound.empty:
         return None # Requires both directions
@@ -589,30 +592,25 @@ def match_ctb_routes_to_government_gtfs(
     debug: bool = False
 ) -> Dict[str, str]:
     """
-    Main function to match operator routes to government GTFS routes.
+    Match Citybus routes using TD ROUTE MDB:
+    - Find first ROUTE_ID where COMPANY_CODE='CTB' and SPECIAL_TYPE=0 and ROUTE_NAMEC == route number.
+    - Return mapping route_short_name -> government route_id.
     """
+    from src.ingest.td_route_mdb import get_ctb_route_id_map
+
     if debug:
-        print(f"Matching {operator_name} routes to government GTFS...")
+        print("Matching CTB routes via TD ROUTE MDB lookup…")
 
-    operator_routes = get_operator_route_stop_counts(engine, operator_name)
+    mapping = get_ctb_route_id_map(silent=not debug)
+
     if route_filter:
-        operator_routes = operator_routes[operator_routes['route'].isin(route_filter)]
+        mapping = {k: v for k, v in mapping.items() if k in route_filter}
 
-    route_numbers = operator_routes['route'].unique().tolist()
-    gov_agency_ids = AGENCY_MAPPING.get(operator_name, [])
-    
-    gov_routes_info = get_government_gtfs_route_info_for_ctb(engine, route_numbers, gov_agency_ids)
+    if debug and os.environ.get('VERBOSE_MATCH') == '1':
+        sample_keys = list(mapping.keys())[:10]
+        print(f"CTB matched {len(mapping)} routes. Sample: {[(k, mapping[k]) for k in sample_keys]}")
 
-    matches = {}
-    for route_num, group in operator_routes.groupby('route'):
-        gov_candidates = gov_routes_info[gov_routes_info['route_short_name'] == route_num]
-        best_match_id = find_best_match_for_ctb_route(group, gov_candidates)
-        if best_match_id:
-            matches[route_num] = best_match_id
-            if debug and os.environ.get('VERBOSE_MATCH') == '1':
-                print(f"Matched route {route_num} to {best_match_id}")
-
-    return matches
+    return mapping
 
 def match_nlb_routes_to_government_gtfs(
     engine: Engine,
@@ -883,7 +881,7 @@ def match_operator_routes_with_coop_fallback(
         if debug and coop_routes:
             print(f"Found {len(coop_routes)} co-op routes (KMB+CTB): {coop_routes[:10]}...")
         
-        # Get regular CTB matches first
+        # Get regular CTB matches first (now via MDB mapping)
         ctb_matches = match_operator_routes_to_government_gtfs(
             engine=engine,
             operator_name="CTB", 

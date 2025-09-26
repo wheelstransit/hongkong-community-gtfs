@@ -109,7 +109,7 @@ def main():
         "gmb_stops_and_route_stops", gmb_client_instance.get_all_stops_and_route_stops, args.force_ingest,
         force_ingest_gmb=args.force_ingest_gmb, silent=args.silent
     )
-    raw_gmb_stops, raw_gmb_route_stops = gmb_stops_data if gmb_stops_data else ([], [])
+    raw_gmb_stops, raw_gmb_route_stops, raw_gmb_route_directions = gmb_stops_data if gmb_stops_data else ([], [], [])
     if not args.silent:
         print(f"gmb data - routes: {len(raw_gmb_routes) if raw_gmb_routes else 0}, stops: {len(raw_gmb_stops) if raw_gmb_stops else 0}, route-stops: {len(raw_gmb_route_stops) if raw_gmb_route_stops else 0}")
 
@@ -172,7 +172,8 @@ def main():
         raw_stops=raw_gmb_stops,
         raw_route_stops=raw_gmb_route_stops,
         engine=engine,
-        silent=args.silent
+        silent=args.silent,
+        raw_route_directions=raw_gmb_route_directions
     )
 
     process_and_load_mtrbus_data(

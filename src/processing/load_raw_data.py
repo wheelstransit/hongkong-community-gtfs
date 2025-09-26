@@ -55,7 +55,7 @@ def process_and_load_kmb_data(raw_routes: list, raw_stops: list, raw_route_stops
     if not silent:
         print(f"Loaded {len(route_stops_df)} records into 'kmb_stop_sequences' table.")
 
-def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops: list, engine: Engine, silent=False):
+def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops: list, engine: Engine, silent=False, raw_route_directions: list=None):
     if not all([raw_routes, raw_stops, raw_route_stops]):
         if not silent:
             print("One or more GMB raw data lists are empty. Aborting GMB data processing.")
@@ -74,6 +74,41 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
             })
 
     routes_df = pd.DataFrame(flattened_routes)
+    # Enrich with direction origin/destination data if provided
+    if raw_route_directions:
+        dirs_df = pd.DataFrame(raw_route_directions)
+        # Keep only needed columns
+        keep_cols = ['region','route_code','route_id','route_seq','orig_en','dest_en','orig_tc','dest_tc','is_circular']
+        dirs_df = dirs_df[[c for c in keep_cols if c in dirs_df.columns]].copy()
+        # Sort by route_seq to assign primary/alt deterministically
+        dirs_df.sort_values(['route_id','route_seq'], inplace=True)
+        # Aggregate
+        agg_rows = []
+        for (route_id), grp in dirs_df.groupby('route_id'):
+            grp_sorted = grp.reset_index(drop=True)
+            primary = grp_sorted.iloc[0]
+            alt = grp_sorted.iloc[1] if len(grp_sorted) > 1 else None
+            agg_rows.append({
+                'route_id': route_id,
+                'orig_en_primary': primary.get('orig_en',''),
+                'dest_en_primary': primary.get('dest_en',''),
+                'orig_tc_primary': primary.get('orig_tc',''),
+                'dest_tc_primary': primary.get('dest_tc',''),
+                'orig_en_alt': alt.get('orig_en','') if alt is not None else '',
+                'dest_en_alt': alt.get('dest_en','') if alt is not None else '',
+                'orig_tc_alt': alt.get('orig_tc','') if alt is not None else '',
+                'dest_tc_alt': alt.get('dest_tc','') if alt is not None else '',
+                'is_circular_any': bool(grp_sorted['is_circular'].any())
+            })
+        agg_df = pd.DataFrame(agg_rows)
+        # Map route_id back to (region, route_code) using first appearance in dirs_df
+        id_to_pair = dirs_df.drop_duplicates('route_id').set_index('route_id')[['region','route_code']]
+        agg_df = agg_df.merge(id_to_pair, left_on='route_id', right_index=True, how='left')
+        # Merge onto routes_df using region/route_code
+        routes_df = routes_df.merge(
+            agg_df[['region','route_code','orig_en_primary','dest_en_primary','orig_tc_primary','dest_tc_primary','orig_en_alt','dest_en_alt','orig_tc_alt','dest_tc_alt','is_circular_any']],
+            on=['region','route_code'], how='left'
+        )
     routes_df.to_sql('gmb_routes', engine, if_exists='replace', index=False)
     if not silent:
         print(f"Loaded {len(routes_df)} records into 'gmb_routes' table.")
