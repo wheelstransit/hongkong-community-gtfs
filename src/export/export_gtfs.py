@@ -11,7 +11,7 @@ from src.processing.utils import get_direction
 from src.processing.gtfs_route_matcher import match_operator_routes_to_government_gtfs, match_operator_routes_with_coop_fallback
 from datetime import timedelta
 import re
-from typing import Union, Optional
+from typing import Union, Optional, Tuple
 import math
 import time, json
 
@@ -78,6 +78,121 @@ def _hhmmss_to_seconds(timestr: str) -> Optional[int]:
 
 def _seconds_to_hhmmss(total_seconds: int) -> str:
     return format_timedelta(timedelta(seconds=int(total_seconds)))
+
+
+def _load_mtr_terminal_maps(engine: Engine) -> Tuple[dict, dict]:
+    """Load a mapping of (line_code, direction_variant) -> terminal station names (EN, TC).
+
+    Returns two dicts: (en_map, tc_map)
+    """
+    try:
+        query = '''
+            SELECT "Line Code" AS line_code,
+                   "Direction" AS direction,
+                   "English Name" AS station_name_en,
+                   "Chinese Name" AS station_name_tc,
+                   "Sequence" AS sequence
+            FROM mtr_lines_and_stations
+        '''
+        df = pd.read_sql(query, engine)
+    except Exception:
+        return {}, {}
+
+    if df.empty:
+        return {}, {}
+
+    # coerce sequence to numeric and drop bad rows
+    df['seq_num'] = pd.to_numeric(df['sequence'], errors='coerce')
+    df = df.dropna(subset=['seq_num'])
+    if df.empty:
+        return {}, {}
+
+    df = df.dropna(subset=['station_name_en'])
+    if df.empty:
+        return {}, {}
+
+    df = df.sort_values('seq_num')
+
+    terminals = (
+        df.groupby(['line_code', 'direction'], as_index=False)
+        .agg(last_en=('station_name_en', lambda s: s.iloc[-1]),
+             last_tc=('station_name_tc', lambda s: s.iloc[-1]))
+    )
+
+    en_map: dict = {}
+    tc_map: dict = {}
+    for rec in terminals.itertuples(index=False):
+        dir_raw = str(rec.direction or '').strip()
+        if not dir_raw:
+            continue
+
+        en_value = str(rec.last_en).strip() if pd.notna(rec.last_en) else ''
+        tc_value = str(rec.last_tc).strip() if pd.notna(rec.last_tc) else ''
+
+        # store normalized keys and some fallbacks
+        if en_value and en_value.lower() != 'nan':
+            en_map[(rec.line_code, dir_raw)] = en_value
+        if tc_value and tc_value.lower() != 'nan':
+            tc_map[(rec.line_code, dir_raw)] = tc_value
+
+        # add variants (upper/lower and suffix after dash)
+        fallback_keys = {(rec.line_code, dir_raw.upper()), (rec.line_code, dir_raw.lower())}
+        if '-' in dir_raw:
+            suffix = dir_raw.split('-', 1)[-1]
+            fallback_keys.update({(rec.line_code, suffix), (rec.line_code, suffix.upper()), (rec.line_code, suffix.lower())})
+        if dir_raw.upper().endswith('UT'):
+            fallback_keys.update({(rec.line_code, 'UT'), (rec.line_code, 'ut')})
+        if dir_raw.upper().endswith('DT'):
+            fallback_keys.update({(rec.line_code, 'DT'), (rec.line_code, 'dt')})
+
+        for key in fallback_keys:
+            if en_value and en_value.lower() != 'nan':
+                en_map.setdefault(key, en_value)
+            if tc_value and tc_value.lower() != 'nan':
+                tc_map.setdefault(key, tc_value)
+
+    return en_map, tc_map
+
+
+def _resolve_mtr_terminal(line_code: str, variant: str, direction_id: Optional[Union[int, float, str]], lookup: dict) -> Optional[str]:
+    """Resolve the terminal station name from a lookup using a variety of candidate keys."""
+    if not lookup or not line_code:
+        return None
+
+    variant_str = str(variant or '').strip()
+    candidates = []
+    if variant_str:
+        candidates.extend([(line_code, variant_str), (line_code, variant_str.upper()), (line_code, variant_str.lower())])
+        if '-' in variant_str:
+            suffix = variant_str.split('-', 1)[-1]
+            candidates.extend([(line_code, suffix), (line_code, suffix.upper()), (line_code, suffix.lower())])
+
+    # direction-based fallback
+    dir_value = None
+    if direction_id is not None and direction_id != '':
+        try:
+            dir_float = float(direction_id)
+            if not math.isnan(dir_float):
+                dir_value = int(dir_float)
+        except (TypeError, ValueError):
+            try:
+                dir_value = int(str(direction_id))
+            except (TypeError, ValueError):
+                dir_value = None
+
+    if dir_value in (0, 1):
+        fallback_variant = 'UT' if dir_value == 0 else 'DT'
+        candidates.extend([(line_code, fallback_variant), (line_code, fallback_variant.lower())])
+
+    for key in candidates:
+        value = lookup.get(key)
+        if value is None:
+            continue
+        value_str = str(value).strip()
+        if value_str and value_str.lower() != 'nan':
+            return value_str
+
+    return None
 
 
 def _expand_stop_area_records(records):
@@ -761,6 +876,35 @@ def generate_trip_headsigns(engine: Engine, trips_df: pd.DataFrame, silent: bool
         if not silent:
             print(f"Headsign warning (GMB map): {e}")
 
+    # MTR Rail (English)
+    try:
+        mtrr_mask = work_df['agency_id'] == 'MTRR'
+        if mtrr_mask.any():
+            terminal_map_en, _ = _load_mtr_terminal_maps(engine)
+            if terminal_map_en:
+                subset = work_df.loc[mtrr_mask]
+                resolved = []
+                for idx, row in subset.iterrows():
+                    trip_id = str(row.get('trip_id', '') or '')
+                    line_code = None
+                    variant = ''
+                    if trip_id:
+                        parts = trip_id.split('-')
+                        if len(parts) >= 3:
+                            line_code = parts[1]
+                            variant = '-'.join(parts[2:])
+                    dest = _resolve_mtr_terminal(line_code, variant, row.get('direction_id'), terminal_map_en)
+                    if dest:
+                        resolved.append(dest)
+                    else:
+                        fallback_val = work_df.at[idx, 'trip_headsign']
+                        fallback_val = '' if pd.isna(fallback_val) else str(fallback_val)
+                        resolved.append(fallback_val)
+                work_df.loc[subset.index, 'trip_headsign'] = resolved
+    except Exception as e:
+        if not silent:
+            print(f"Headsign warning (MTR Rail map): {e}")
+
     # Final cleanup: ensure string type and fill blanks with route_short_name if still empty
     if 'route_short_name' in work_df.columns:
         empty_mask = (work_df['trip_headsign'].isna()) | (work_df['trip_headsign'].astype(str).str.strip()=='')
@@ -823,7 +967,9 @@ def generate_trip_headsigns(engine: Engine, trips_df: pd.DataFrame, silent: bool
     except Exception as e:
         if not silent:
             print(f"Headsign second-pass warning (GMB): {e}")
-    work_df['trip_headsign'] = work_df['trip_headsign'].fillna('').astype(str)
+    work_df['trip_headsign'] = work_df['trip_headsign'].fillna('')
+    work_df['trip_headsign'] = work_df['trip_headsign'].astype(str)
+    work_df['trip_headsign'] = work_df['trip_headsign'].replace({'nan': '', 'None': ''})
     return work_df
 
 def generate_trip_headsigns_tc(engine: Engine, trips_df: pd.DataFrame, english_headsigns: Optional[pd.Series] = None, silent: bool=False) -> pd.Series:
@@ -986,6 +1132,33 @@ def generate_trip_headsigns_tc(engine: Engine, trips_df: pd.DataFrame, english_h
     except Exception as e:
         if not silent:
             print(f"Headsign TC warning (GMB map): {e}")
+
+    # MTR Rail (TC): use terminal name Chinese mapping
+    try:
+        mtrr_mask = work_df['agency_id'] == 'MTRR'
+        if mtrr_mask.any():
+            _, terminal_map_tc = _load_mtr_terminal_maps(engine)
+            if terminal_map_tc:
+                subset = work_df.loc[mtrr_mask]
+                resolved = []
+                for idx, row in subset.iterrows():
+                    trip_id = str(row.get('trip_id', '') or '')
+                    line_code = None
+                    variant = ''
+                    if trip_id:
+                        parts = trip_id.split('-')
+                        if len(parts) >= 3:
+                            line_code = parts[1]
+                            variant = '-'.join(parts[2:])
+                    dest = _resolve_mtr_terminal(line_code, variant, row.get('direction_id'), terminal_map_tc)
+                    if dest:
+                        resolved.append(dest)
+                    else:
+                        resolved.append(str(headsigns.at[idx]))
+                headsigns.loc[subset.index] = resolved
+    except Exception as e:
+        if not silent:
+            print(f"Headsign TC warning (MTR Rail map): {e}")
 
     # Fill empties using fallbacks
     headsigns = headsigns.fillna('').astype(str)
@@ -1984,7 +2157,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             'service_id': f"MTR-{line_code}-SERVICE",
             'trip_id': trip_id,
             'direction_id': direction_id,
-            'original_service_id': f"MTR-{line_code}-SERVICE"
+            'original_service_id': f"MTR-{line_code}-SERVICE",
+            'route_short_name': line_code
         })
     mtr_trips_df = pd.DataFrame(mtr_trips_list)
 

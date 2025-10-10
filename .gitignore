@@ -18,6 +18,7 @@ dist/
 downloads/
 output/
 eggs/
+temp/
 .eggs/
 lib/
 lib64/
