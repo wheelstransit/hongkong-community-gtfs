@@ -715,6 +715,8 @@ def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine, silent=False
 def process_and_load_mtr_rails_data(
     raw_mtr_lines_and_stations: list,
     raw_light_rail_routes_and_stops: list,
+    raw_mtr_lines_fares: list,
+    raw_light_rail_fares: list,
     engine: Engine,
     silent=False
 ):
@@ -739,6 +741,15 @@ def process_and_load_mtr_rails_data(
         if not silent:
             print(f"Loaded {len(stations_gdf)} records into 'mtr_lines_and_stations' table.")
 
+    # --- MTR Heavy Rail Fares ---
+    if raw_mtr_lines_fares:
+        if not silent:
+            print("Processing MTR lines fares...")
+        mtr_fares_df = pd.DataFrame(raw_mtr_lines_fares)
+        mtr_fares_df.to_sql('mtr_lines_fares', engine, if_exists='replace', index=False)
+        if not silent:
+            print(f"Loaded {len(mtr_fares_df)} records into 'mtr_lines_fares' table.")
+
     # --- Light Rail ---
     if raw_light_rail_routes_and_stops:
         if not silent:
@@ -747,6 +758,15 @@ def process_and_load_mtr_rails_data(
         lrt_routes_stops_df.to_sql('light_rail_routes_and_stops', engine, if_exists='replace', index=False)
         if not silent:
             print(f"Loaded {len(lrt_routes_stops_df)} records into 'light_rail_routes_and_stops' table.")
+
+    # --- Light Rail Fares ---
+    if raw_light_rail_fares:
+        if not silent:
+            print("Processing Light Rail fares...")
+        lr_fares_df = pd.DataFrame(raw_light_rail_fares)
+        lr_fares_df.to_sql('light_rail_fares', engine, if_exists='replace', index=False)
+        if not silent:
+            print(f"Loaded {len(lr_fares_df)} records into 'light_rail_fares' table.")
 
 def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_journey_time_data: dict, engine: Engine, silent=False):
     if not any([raw_journey_time_data, raw_hourly_journey_time_data]):

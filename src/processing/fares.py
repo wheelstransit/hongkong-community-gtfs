@@ -457,3 +457,137 @@ def generate_special_fare_rules(engine: Engine, trips_df: pd.DataFrame, stop_tim
         print(f"Removed {removed} duplicate rules. Final count: {len(deduplicated_rules)} special fare rules.")
     
     return pd.DataFrame(deduplicated_rules)
+
+
+def generate_mtr_special_fare_rules(engine: Engine, silent: bool = False) -> pd.DataFrame:
+    """
+    Generates agency-level special fare rules for MTR heavy rail from fare CSV data.
+    
+    Returns DataFrame with columns: special_fare_id, rule_type, trip_id, 
+    onboarding_stop_id, offboarding_stop_id, price, currency
+    """
+    if not silent:
+        print("Generating MTR heavy rail special fare rules...")
+    
+    try:
+        # Read MTR fares from database
+        mtr_fares_df = pd.read_sql("SELECT * FROM mtr_lines_fares", engine)
+        
+        # Read station data to map Station ID to our stop_id format
+        stations_df = pd.read_sql(
+            'SELECT "Station ID" as station_id, "Station Code" as station_code FROM mtr_lines_and_stations',
+            engine
+        )
+        stations_df = stations_df.drop_duplicates(subset=['station_id'])
+        
+        # Create mapping from Station ID to our stop_id (MTR-{station_code})
+        station_id_to_stop_id = {}
+        for _, row in stations_df.iterrows():
+            station_id_to_stop_id[str(row['station_id'])] = f"MTR-{row['station_code']}"
+        
+    except Exception as e:
+        if not silent:
+            print(f"Error reading MTR fare data: {e}")
+        return pd.DataFrame(columns=['special_fare_id', 'rule_type', 'trip_id', 'onboarding_stop_id', 'offboarding_stop_id', 'price', 'currency'])
+    
+    if mtr_fares_df.empty:
+        if not silent:
+            print("No MTR fare data found.")
+        return pd.DataFrame(columns=['special_fare_id', 'rule_type', 'trip_id', 'onboarding_stop_id', 'offboarding_stop_id', 'price', 'currency'])
+    
+    # Process fare rules
+    special_fare_rules = []
+    for idx, row in mtr_fares_df.iterrows():
+        src_station_id = str(row.get('SRC_STATION_ID', ''))
+        dest_station_id = str(row.get('DEST_STATION_ID', ''))
+        fare = row.get('OCT_ADT_FARE')
+        
+        # Skip if same station (zero fare)
+        if src_station_id == dest_station_id:
+            continue
+        
+        # Map to our stop_id format
+        onboarding_stop_id = station_id_to_stop_id.get(src_station_id)
+        offboarding_stop_id = station_id_to_stop_id.get(dest_station_id)
+        
+        if not onboarding_stop_id or not offboarding_stop_id:
+            continue
+        
+        try:
+            price = float(fare)
+        except (ValueError, TypeError):
+            continue
+        
+        special_fare_rules.append({
+            'special_fare_id': f"MTR-{src_station_id}-{dest_station_id}",
+            'rule_type': 'agency',
+            'trip_id': '',  # Empty for agency-level rules
+            'onboarding_stop_id': onboarding_stop_id,
+            'offboarding_stop_id': offboarding_stop_id,
+            'price': price,
+            'currency': 'HKD'
+        })
+    
+    if not silent:
+        print(f"Generated {len(special_fare_rules)} MTR agency-level special fare rules.")
+    
+    return pd.DataFrame(special_fare_rules)
+
+
+def generate_light_rail_special_fare_rules(engine: Engine, silent: bool = False) -> pd.DataFrame:
+    """
+    Generates agency-level special fare rules for Light Rail from fare CSV data.
+    
+    Returns DataFrame with columns: special_fare_id, rule_type, trip_id,
+    onboarding_stop_id, offboarding_stop_id, price, currency
+    """
+    if not silent:
+        print("Generating Light Rail special fare rules...")
+    
+    try:
+        # Read Light Rail fares from database
+        lr_fares_df = pd.read_sql("SELECT * FROM light_rail_fares", engine)
+    except Exception as e:
+        if not silent:
+            print(f"Error reading Light Rail fare data: {e}")
+        return pd.DataFrame(columns=['special_fare_id', 'rule_type', 'trip_id', 'onboarding_stop_id', 'offboarding_stop_id', 'price', 'currency'])
+    
+    if lr_fares_df.empty:
+        if not silent:
+            print("No Light Rail fare data found.")
+        return pd.DataFrame(columns=['special_fare_id', 'rule_type', 'trip_id', 'onboarding_stop_id', 'offboarding_stop_id', 'price', 'currency'])
+    
+    # Process fare rules
+    special_fare_rules = []
+    for idx, row in lr_fares_df.iterrows():
+        from_station_id = str(row.get('from_station_id', ''))
+        to_station_id = str(row.get('to_station_id', ''))
+        fare = row.get('fare_octo_adult')
+        
+        # Skip if same station (zero fare)
+        if from_station_id == to_station_id:
+            continue
+        
+        # Light Rail stop_id format is LR{station_id}
+        onboarding_stop_id = f"LR{from_station_id}"
+        offboarding_stop_id = f"LR{to_station_id}"
+        
+        try:
+            price = float(fare)
+        except (ValueError, TypeError):
+            continue
+        
+        special_fare_rules.append({
+            'special_fare_id': f"LR-{from_station_id}-{to_station_id}",
+            'rule_type': 'agency',
+            'trip_id': '',  # Empty for agency-level rules
+            'onboarding_stop_id': onboarding_stop_id,
+            'offboarding_stop_id': offboarding_stop_id,
+            'price': price,
+            'currency': 'HKD'
+        })
+    
+    if not silent:
+        print(f"Generated {len(special_fare_rules)} Light Rail agency-level special fare rules.")
+    
+    return pd.DataFrame(special_fare_rules)

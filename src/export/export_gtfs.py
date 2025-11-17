@@ -10,7 +10,12 @@ from src.processing.stop_times import generate_stop_times_for_agency_optimized a
 from src.processing.shapes import generate_shapes_from_csdi_files, match_trips_to_csdi_shapes
 from src.processing.utils import get_direction
 from src.processing.gtfs_route_matcher import match_operator_routes_to_government_gtfs, match_operator_routes_with_coop_fallback
-from src.processing.fares import generate_fare_stages, generate_special_fare_rules
+from src.processing.fares import (
+    generate_fare_stages,
+    generate_special_fare_rules,
+    generate_mtr_special_fare_rules,
+    generate_light_rail_special_fare_rules
+)
 from src.export.light_rail import build_light_rail_gtfs_data
 from datetime import timedelta
 import re
@@ -3069,16 +3074,41 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     if not silent:
         print("Generating special_fare_rules.csv...")
     with PhaseTimer('Generate special_fare_rules', phase_timings, silent):
+        # Generate government GTFS special fares (trip-level)
         special_fare_rules_df = generate_special_fare_rules(engine, final_trips_df, final_stop_times_output_df, silent=silent)
+        
+        # Generate MTR heavy rail agency-level fares
+        mtr_fare_rules_df = generate_mtr_special_fare_rules(engine, silent=silent)
+        
+        # Generate Light Rail agency-level fares
+        lr_fare_rules_df = generate_light_rail_special_fare_rules(engine, silent=silent)
+        
+        # Combine all special fare rules
+        all_fare_rules = []
         if not special_fare_rules_df.empty:
-            special_fare_rules_df.to_csv(os.path.join(final_output_dir, 'special_fare_rules.csv'), index=False)
+            all_fare_rules.append(special_fare_rules_df)
+        if not mtr_fare_rules_df.empty:
+            all_fare_rules.append(mtr_fare_rules_df)
+        if not lr_fare_rules_df.empty:
+            all_fare_rules.append(lr_fare_rules_df)
+        
+        if all_fare_rules:
+            combined_special_fare_rules_df = pd.concat(all_fare_rules, ignore_index=True)
+            combined_special_fare_rules_df.to_csv(os.path.join(final_output_dir, 'special_fare_rules.csv'), index=False)
             if not silent:
-                print(f"Generated special_fare_rules.csv with {len(special_fare_rules_df)} records.")
+                print(f"Generated special_fare_rules.csv with {len(combined_special_fare_rules_df)} total records:")
+                if not special_fare_rules_df.empty:
+                    print(f"  - {len(special_fare_rules_df)} trip-level rules from government GTFS")
+                if not mtr_fare_rules_df.empty:
+                    print(f"  - {len(mtr_fare_rules_df)} agency-level rules for MTR heavy rail")
+                if not lr_fare_rules_df.empty:
+                    print(f"  - {len(lr_fare_rules_df)} agency-level rules for Light Rail")
         else:
             if not silent:
                 print("No special fare rules generated (empty file created as placeholder).")
-            # Create empty file with headers
-            special_fare_rules_df.to_csv(os.path.join(final_output_dir, 'special_fare_rules.csv'), index=False)
+            # Create empty DataFrame with proper schema
+            empty_df = pd.DataFrame(columns=['special_fare_id', 'rule_type', 'trip_id', 'onboarding_stop_id', 'offboarding_stop_id', 'price', 'currency'])
+            empty_df.to_csv(os.path.join(final_output_dir, 'special_fare_rules.csv'), index=False)
     
     # --- 5. Zip the feed ---
     if not silent:

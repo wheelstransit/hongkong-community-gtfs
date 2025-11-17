@@ -124,6 +124,8 @@ def main():
     # mtr rails
     raw_mtr_lines_and_stations = fetch_or_load_from_cache("mtr_lines_and_stations", mtr_rails_client.fetch_mtr_lines_and_stations_with_locations, args.force_ingest, silent=args.silent)
     raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest, silent=args.silent)
+    raw_mtr_lines_fares = fetch_or_load_from_cache("mtr_lines_fares", mtr_rails_client.fetch_mtr_lines_fares, args.force_ingest, silent=args.silent)
+    raw_light_rail_fares = fetch_or_load_from_cache("light_rail_fares", mtr_rails_client.fetch_light_rail_fares, args.force_ingest, silent=args.silent)
     raw_mtr_headway = fetch_or_load_from_cache("mtr_headway", mtr_headway.scrape_train_frequency, args.force_ingest, silent=args.silent)
     raw_mtr_exits = fetch_or_load_from_cache("mtr_exits", mtr_exit_client.fetch_mtr_exits, args.force_ingest, silent=args.silent)
 
@@ -200,6 +202,8 @@ def main():
     process_and_load_mtr_rails_data(
         raw_mtr_lines_and_stations=raw_mtr_lines_and_stations,
         raw_light_rail_routes_and_stops=raw_light_rail_routes_and_stops,
+        raw_mtr_lines_fares=raw_mtr_lines_fares,
+        raw_light_rail_fares=raw_light_rail_fares,
         engine=engine,
         silent=args.silent
     )
