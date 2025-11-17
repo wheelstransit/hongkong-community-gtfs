@@ -1,14 +1,14 @@
 import pandas as pd
 
 FREQUENCIES_URL = "https://static.data.gov.hk/td/pt-headway-en/frequencies.txt"
-FARE_ATTRIBUTES_URL = "https://static.data.gov.hk/td/pt-headway-en/fare_attributes.txt"
-FARE_RULES_URL = "https://static.data.gov.hk/td/pt-headway-en/fare_rules.txt"
 CALENDAR_URL = "https://static.data.gov.hk/td/pt-headway-en/calendar.txt"
 CALENDAR_DATES_URL = "https://static.data.gov.hk/td/pt-headway-en/calendar_dates.txt"
 TRIPS_URL = "https://static.data.gov.hk/td/pt-headway-en/trips.txt"
 ROUTES_URL = "https://static.data.gov.hk/td/pt-headway-en/routes.txt"
 STOPS_URL = "https://static.data.gov.hk/td/pt-headway-en/stops.txt"
 STOP_TIMES_URL = "https://static.data.gov.hk/td/pt-headway-en/stop_times.txt"
+FARE_ATTRIBUTES_URL = "https://static.data.gov.hk/td/pt-headway-en/fare_attributes.txt"
+FARE_RULES_URL = "https://static.data.gov.hk/td/pt-headway-en/fare_rules.txt"
 
 def fetch_frequencies_data(silent=False):
     """Fetches the frequencies (headway) data from frequencies.txt."""
@@ -50,28 +50,6 @@ def fetch_routes_data(silent=False):
     except Exception as e:
         if not silent:
             print(f"Error fetching routes data: {e}")
-        return None
-
-def fetch_fare_data(silent=False):
-    """Fetches both fare_attributes and fare_rules data."""
-    if not silent:
-        print("Fetching fare data from Gov GTFS source...")
-    try:
-        fare_attributes_df = pd.read_csv(FARE_ATTRIBUTES_URL)
-        if not silent:
-            print(f"Successfully fetched {len(fare_attributes_df)} fare attribute records.")
-
-        fare_rules_df = pd.read_csv(FARE_RULES_URL)
-        if not silent:
-            print(f"Successfully fetched {len(fare_rules_df)} fare rule records.")
-
-        return {
-            'attributes': fare_attributes_df.to_dict('records'),
-            'rules': fare_rules_df.to_dict('records')
-        }
-    except Exception as e:
-        if not silent:
-            print(f"Error fetching fare data: {e}")
         return None
 
 def fetch_calendar_data(silent=False):
@@ -130,6 +108,34 @@ def fetch_stop_times_data(silent=False):
             print(f"Error fetching stop_times data: {e}")
         return None
 
+def fetch_fare_attributes_data(silent=False):
+    """Fetches the fare_attributes data which contains fare information."""
+    if not silent:
+        print("Fetching fare_attributes data from Gov GTFS source...")
+    try:
+        df = pd.read_csv(FARE_ATTRIBUTES_URL)
+        if not silent:
+            print(f"Successfully fetched {len(df)} fare_attributes records.")
+        return df.to_dict('records')
+    except Exception as e:
+        if not silent:
+            print(f"Error fetching fare_attributes data: {e}")
+        return None
+
+def fetch_fare_rules_data(silent=False):
+    """Fetches the fare_rules data which contains fare rules for routes and stops."""
+    if not silent:
+        print("Fetching fare_rules data from Gov GTFS source...")
+    try:
+        df = pd.read_csv(FARE_RULES_URL)
+        if not silent:
+            print(f"Successfully fetched {len(df)} fare_rules records.")
+        return df.to_dict('records')
+    except Exception as e:
+        if not silent:
+            print(f"Error fetching fare_rules data: {e}")
+        return None
+
 if __name__ == '__main__':
     print("testing")
 
@@ -149,14 +155,6 @@ if __name__ == '__main__':
     if routes_data:
         print("Sample routes data:")
         print(routes_data[0])
-    print("-" * 20)
-
-    fare_data = fetch_fare_data()
-    if fare_data:
-        print("Sample fare attributes data:")
-        print(fare_data['attributes'][0] if fare_data['attributes'] else "No fare attributes")
-        print("Sample fare rules data:")
-        print(fare_data['rules'][0] if fare_data['rules'] else "No fare rules")
     print("-" * 20)
 
     calendar_data = fetch_calendar_data()

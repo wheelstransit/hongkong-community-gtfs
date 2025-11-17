@@ -46,8 +46,12 @@ def _export_table_to_csv(mdb_path: str, table: str, silent: bool = False) -> pd.
 
 def get_ctb_route_id_map(cache_dir: str = ".cache", silent: bool = False) -> Dict[str, str]:
     """
-    Return a mapping of Citybus route number (string) -> first ROUTE_ID (string) from TD ROUTE MDB
-    filtered by COMPANY_CODE='CTB' and SPECIAL_TYPE=0.
+    Return a mapping of Citybus route number (string) -> first ROUTE_ID (string) from TD ROUTE MDB.
+    
+    Logic:
+    1. First, try to find routes with SPECIAL_TYPE=0 (standard routes)
+    2. For routes that don't have any SPECIAL_TYPE=0 variant, include the first available route
+       regardless of its SPECIAL_TYPE value
     """
     mdb_path = _ensure_download(cache_dir, silent)
     route_df = _export_table_to_csv(mdb_path, "ROUTE", silent)
@@ -59,23 +63,40 @@ def get_ctb_route_id_map(cache_dir: str = ".cache", silent: bool = False) -> Dic
     if missing:
         raise RuntimeError(f"ROUTE table missing columns: {missing}")
 
-    # Filter CTB, SPECIAL_TYPE=0 and group by route name; pick first ROUTE_ID
-    ctb = route_df[(route_df["COMPANY_CODE"] == "CTB") & (route_df["SPECIAL_TYPE"].astype(int) == 0)]
-
-    # ROUTE_NAMEC holds the route number as string per requirement
-    # Keep first occurrence per route number
-    ctb_sorted = ctb.sort_values(["ROUTE_NAMEC", "ROUTE_ID"], kind="stable")
-    first_per_route = ctb_sorted.groupby("ROUTE_NAMEC", as_index=False).first()
+    # Filter CTB routes
+    ctb_all = route_df[route_df["COMPANY_CODE"] == "CTB"]
+    
+    # First, get routes with SPECIAL_TYPE=0 (standard routes)
+    ctb_standard = ctb_all[ctb_all["SPECIAL_TYPE"].astype(int) == 0]
+    
+    # Get all route numbers that have a standard variant
+    standard_route_numbers = set(ctb_standard["ROUTE_NAMEC"].unique())
+    
+    # Get routes that don't have any standard variant
+    ctb_non_standard = ctb_all[~ctb_all["ROUTE_NAMEC"].isin(standard_route_numbers)]
+    
+    # For non-standard routes, get the first occurrence per route number
+    ctb_non_standard_sorted = ctb_non_standard.sort_values(["ROUTE_NAMEC", "ROUTE_ID"], kind="stable")
+    first_non_standard_per_route = ctb_non_standard_sorted.groupby("ROUTE_NAMEC", as_index=False).first()
+    
+    # For standard routes, get the first occurrence per route number
+    ctb_standard_sorted = ctb_standard.sort_values(["ROUTE_NAMEC", "ROUTE_ID"], kind="stable")
+    first_standard_per_route = ctb_standard_sorted.groupby("ROUTE_NAMEC", as_index=False).first()
+    
+    # Combine both sets
+    combined_routes = pd.concat([first_standard_per_route, first_non_standard_per_route], ignore_index=True)
 
     # Build map
     mapping: Dict[str, str] = {}
-    for _, row in first_per_route.iterrows():
+    for _, row in combined_routes.iterrows():
         route_num = str(row["ROUTE_NAMEC"]).strip()
         route_id = str(row["ROUTE_ID"]).strip()
         mapping[route_num] = route_id
 
     if not silent:
-        print(f"CTB route_id mapping from TD MDB: {len(mapping)} routes")
+        standard_count = len(first_standard_per_route)
+        non_standard_count = len(first_non_standard_per_route)
+        print(f"CTB route_id mapping from TD MDB: {len(mapping)} routes ({standard_count} standard, {non_standard_count} fallback)")
     return mapping
 
 def lookup_ctb_route_id(route_number: str, cache_dir: str = ".cache", silent: bool = False) -> Optional[str]:

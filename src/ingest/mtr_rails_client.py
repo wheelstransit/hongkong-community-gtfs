@@ -8,10 +8,7 @@ from typing import List, Dict
 # constants
 # constants
 MTR_LINES_AND_STATIONS_URL = "https://opendata.mtr.com.hk/data/mtr_lines_and_stations.csv"
-MTR_LINES_FARES_URL = "https://opendata.mtr.com.hk/data/mtr_lines_fares.csv"
 LIGHT_RAIL_ROUTES_AND_STOPS_URL = "https://opendata.mtr.com.hk/data/light_rail_routes_and_stops.csv"
-LIGHT_RAIL_FARES_URL = "https://opendata.mtr.com.hk/data/light_rail_fares.csv"
-AIRPORT_EXPRESS_FARES_URL = "https://opendata.mtr.com.hk/data/airport_express_fares.csv"
 GEODATA_API_URL = "https://geodata.gov.hk/gs/api/v1.0.0/locationSearch?q="
 
 async def fetch_station_location(client, station_name_tc, epsg_transformer):
@@ -94,17 +91,8 @@ def fetch_and_parse_csv_sync(url: str, silent=False) -> List[Dict]:
             print(f"error fetching/parsing csv from {url}: {e}")
         return []
 
-def fetch_mtr_lines_fares(silent=False) -> List[Dict]:
-    return fetch_and_parse_csv_sync(MTR_LINES_FARES_URL, silent=silent)
-
 def fetch_light_rail_routes_and_stops(silent=False) -> List[Dict]:
     return fetch_and_parse_csv_sync(LIGHT_RAIL_ROUTES_AND_STOPS_URL, silent=silent)
-
-def fetch_light_rail_fares(silent=False) -> List[Dict]:
-    return fetch_and_parse_csv_sync(LIGHT_RAIL_FARES_URL, silent=silent)
-
-def fetch_airport_express_fares(silent=False) -> List[Dict]:
-    return fetch_and_parse_csv_sync(AIRPORT_EXPRESS_FARES_URL, silent=silent)
 
 if __name__ == "__main__":
     async def main():

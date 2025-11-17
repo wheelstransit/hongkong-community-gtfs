@@ -5,7 +5,6 @@ import html
 
 ROUTES_URL = "https://opendata.mtr.com.hk/data/mtr_bus_routes.csv"
 STOPS_URL = "https://opendata.mtr.com.hk/data/mtr_bus_stops.csv"
-FARES_URL = "https://opendata.mtr.com.hk/data/mtr_bus_fares.csv"
 
 def fetch_and_parse_csv(url, data_name="data", silent=False):
     if not silent:
@@ -40,11 +39,6 @@ def fetch_and_parse_csv(url, data_name="data", silent=False):
 
 def fetch_all_routes(silent=False):
     return fetch_and_parse_csv(ROUTES_URL, "routes", silent=silent)
-
-
-def fetch_all_fares(silent=False):
-    return fetch_and_parse_csv(FARES_URL, "fares", silent=silent)
-
 
 def fetch_all_route_stops(silent=False):
     return fetch_and_parse_csv(STOPS_URL, "route-stops", silent=silent)
@@ -97,12 +91,6 @@ if __name__ == '__main__':
     if route_stops_data:
         print("\nSample route-stop data (raw from CSV):")
         print(route_stops_data[0])
-    print("-" * 30)
-
-    fares_data = fetch_all_fares()
-    if fares_data:
-        print("\nSample fare data:")
-        print(fares_data[0])
     print("-" * 30)
 
     print("done testing :)")

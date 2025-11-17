@@ -214,3 +214,5 @@ nvim.local.config
 AGENT.md
 
 waypoints
+
+test/

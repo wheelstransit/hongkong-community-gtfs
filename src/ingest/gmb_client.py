@@ -130,26 +130,46 @@ class GMBClient:
             if not route_details:
                 continue
 
+            variant_metadata = []
             for route_variant in route_details:
                 route_id = route_variant.get('route_id')
                 if not route_id:
                     continue
-                # Extract descriptions to filter only the "Normal" variant
                 desc_en = (route_variant.get('description_en') or '').strip()
                 desc_tc = (route_variant.get('description_tc') or '').strip()
                 desc_sc = (route_variant.get('description_sc') or '').strip()
-                if not (
+                is_normal = (
                     ('normal' in desc_en.lower()) or
                     ('正常' in desc_tc) or
                     ('正常' in desc_sc)
-                ):
+                )
+                variant_metadata.append({
+                    'route_variant': route_variant,
+                    'route_id': route_id,
+                    'desc_en': desc_en,
+                    'desc_tc': desc_tc,
+                    'desc_sc': desc_sc,
+                    'is_normal': is_normal
+                })
+
+            normal_exists = any(meta['is_normal'] for meta in variant_metadata)
+            if not normal_exists and not silent:
+                print(f"No 'Normal' variant found for {region}-{route_code}; including available variants instead.")
+
+            for meta in variant_metadata:
+                if normal_exists and not meta['is_normal']:
                     continue
+
+                route_variant = meta['route_variant']
+                route_id = meta['route_id']
+                desc_en = meta['desc_en']
+                desc_tc = meta['desc_tc']
+                desc_sc = meta['desc_sc']
 
                 for direction in route_variant.get('directions', []):
                     route_seq = direction.get('route_seq')
                     if not route_seq:
                         continue
-                    # Collect direction metadata (orig/dest in EN + TC + SC)
                     orig_en = (direction.get('orig_en') or '').strip()
                     dest_en = (direction.get('dest_en') or '').strip()
                     orig_tc = (direction.get('orig_tc') or '').strip()
@@ -180,9 +200,8 @@ class GMBClient:
                     if not route_stops_data or 'route_stops' not in route_stops_data:
                         continue
 
-                    # Sets to enforce uniqueness
-                    seen_full_keys = set()  # (route_id, route_seq, stop_seq, stop_id)
-                    chosen_seq_stop = {}     # (route_id, route_seq, stop_seq) -> stop_id
+                    seen_full_keys = set()
+                    chosen_seq_stop = {}
 
                     for stop_info in route_stops_data['route_stops']:
                         stop_id = stop_info.get('stop_id')
@@ -195,10 +214,8 @@ class GMBClient:
                             continue
                         seq_key = (route_id, route_seq, stop_seq)
                         if seq_key in chosen_seq_stop and chosen_seq_stop[seq_key] != stop_id:
-                            # Conflict: multiple stop_ids share same sequence; keep first
                             duplicate_seq_conflict += 1
                             continue
-                        # Record
                         seen_full_keys.add(full_key)
                         chosen_seq_stop.setdefault(seq_key, stop_id)
                         unique_stop_ids.add(stop_id)

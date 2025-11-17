@@ -93,11 +93,12 @@ def main():
     raw_gov_routes = fetch_or_load_from_cache("gov_routes", gov_gtfs_client.fetch_routes_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
     raw_gov_calendar = fetch_or_load_from_cache("gov_calendar", gov_gtfs_client.fetch_calendar_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
     raw_gov_calendar_dates = fetch_or_load_from_cache("gov_calendar_dates", gov_gtfs_client.fetch_calendar_dates_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
-    raw_gov_fares = fetch_or_load_from_cache("gov_fares", gov_gtfs_client.fetch_fare_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
     raw_gov_stops = fetch_or_load_from_cache("gov_stops", gov_gtfs_client.fetch_stops_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
     raw_gov_stop_times = fetch_or_load_from_cache("gov_stop_times", gov_gtfs_client.fetch_stop_times_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_fare_attributes = fetch_or_load_from_cache("gov_fare_attributes", gov_gtfs_client.fetch_fare_attributes_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
+    raw_gov_fare_rules = fetch_or_load_from_cache("gov_fare_rules", gov_gtfs_client.fetch_fare_rules_data, args.force_ingest, force_ingest_gov_gtfs=args.force_ingest_gov_gtfs, silent=args.silent)
     if not args.silent:
-        print(f"gov gtfs data - frequencies: {len(raw_gov_frequencies) if raw_gov_frequencies else 0}, trips: {len(raw_gov_trips) if raw_gov_trips else 0}, routes: {len(raw_gov_routes) if raw_gov_routes else 0}, calendar: {len(raw_gov_calendar) if raw_gov_calendar else 0}, fares: {type(raw_gov_fares)} with {len(raw_gov_fares) if raw_gov_fares else 0} keys, stops: {len(raw_gov_stops) if raw_gov_stops else 0}, stop_times: {len(raw_gov_stop_times) if raw_gov_stop_times else 0}")
+        print(f"gov gtfs data - frequencies: {len(raw_gov_frequencies) if raw_gov_frequencies else 0}, trips: {len(raw_gov_trips) if raw_gov_trips else 0}, routes: {len(raw_gov_routes) if raw_gov_routes else 0}, calendar: {len(raw_gov_calendar) if raw_gov_calendar else 0}, stops: {len(raw_gov_stops) if raw_gov_stops else 0}, stop_times: {len(raw_gov_stop_times) if raw_gov_stop_times else 0}, fare_attributes: {len(raw_gov_fare_attributes) if raw_gov_fare_attributes else 0}, fare_rules: {len(raw_gov_fare_rules) if raw_gov_fare_rules else 0}")
 
     # gmb
     gmb_client_instance = gmb_client.GMBClient(silent=args.silent)
@@ -117,16 +118,12 @@ def main():
     raw_mtrbus_routes = fetch_or_load_from_cache("mtrbus_routes", mtrbus_client.fetch_all_routes, args.force_ingest, silent=args.silent)
     raw_mtrbus_stops = fetch_or_load_from_cache("mtrbus_stops", mtrbus_client.fetch_all_stops, args.force_ingest, silent=args.silent)
     raw_mtrbus_route_stops = fetch_or_load_from_cache("mtrbus_route_stops", mtrbus_client.fetch_all_route_stops, args.force_ingest, silent=args.silent)
-    raw_mtrbus_fares = fetch_or_load_from_cache("mtrbus_fares", mtrbus_client.fetch_all_fares, args.force_ingest, silent=args.silent)
     if not args.silent:
-        print(f"mtr bus data - routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}, fares: {len(raw_mtrbus_fares) if raw_mtrbus_fares else 0}")
+        print(f"mtr bus data - routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}")
 
     # mtr rails
     raw_mtr_lines_and_stations = fetch_or_load_from_cache("mtr_lines_and_stations", mtr_rails_client.fetch_mtr_lines_and_stations_with_locations, args.force_ingest, silent=args.silent)
-    raw_mtr_lines_fares = fetch_or_load_from_cache("mtr_lines_fares", mtr_rails_client.fetch_mtr_lines_fares, args.force_ingest, silent=args.silent)
     raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest, silent=args.silent)
-    raw_light_rail_fares = fetch_or_load_from_cache("light_rail_fares", mtr_rails_client.fetch_light_rail_fares, args.force_ingest, silent=args.silent)
-    raw_airport_express_fares = fetch_or_load_from_cache("airport_express_fares", mtr_rails_client.fetch_airport_express_fares, args.force_ingest, silent=args.silent)
     raw_mtr_headway = fetch_or_load_from_cache("mtr_headway", mtr_headway.scrape_train_frequency, args.force_ingest, silent=args.silent)
     raw_mtr_exits = fetch_or_load_from_cache("mtr_exits", mtr_exit_client.fetch_mtr_exits, args.force_ingest, silent=args.silent)
 
@@ -180,7 +177,6 @@ def main():
         raw_routes=raw_mtrbus_routes,
         raw_stops=raw_mtrbus_stops,
         raw_route_stops=raw_mtrbus_route_stops,
-        raw_fares=raw_mtrbus_fares,
         engine=engine,
         silent=args.silent
     )
@@ -203,10 +199,7 @@ def main():
 
     process_and_load_mtr_rails_data(
         raw_mtr_lines_and_stations=raw_mtr_lines_and_stations,
-        raw_mtr_lines_fares=raw_mtr_lines_fares,
         raw_light_rail_routes_and_stops=raw_light_rail_routes_and_stops,
-        raw_light_rail_fares=raw_light_rail_fares,
-        raw_airport_express_fares=raw_airport_express_fares,
         engine=engine,
         silent=args.silent
     )
@@ -217,9 +210,10 @@ def main():
         raw_routes=raw_gov_routes,
         raw_calendar=raw_gov_calendar,
         raw_calendar_dates=raw_gov_calendar_dates,
-        raw_fares=raw_gov_fares,
         raw_stops=raw_gov_stops,
         raw_stop_times=raw_gov_stop_times,
+        raw_fare_attributes=raw_gov_fare_attributes,
+        raw_fare_rules=raw_gov_fare_rules,
         engine=engine,
         silent=args.silent
     )

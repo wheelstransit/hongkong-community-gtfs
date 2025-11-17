@@ -5,9 +5,9 @@ def resolve_parallel_config():
     enabled = os.getenv('HKGTFSPARALLEL', '1') == '1'
     procs_env = os.getenv('HKGTFSPROCS')
     try:
-        max_procs = int(procs_env) if procs_env else min(8, (os.cpu_count() or 1))
+        max_procs = int(procs_env) if procs_env else min(100, (os.cpu_count() or 1))
     except ValueError:
-        max_procs = min(8, (os.cpu_count() or 1))
+        max_procs = min(100, (os.cpu_count() or 1))
     max_procs = max(1, max_procs)
     return enabled, max_procs
 

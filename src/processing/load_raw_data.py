@@ -142,17 +142,62 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     if not silent:
         print("Processing GMB route-stop sequences...")
     route_stops_df = pd.DataFrame(raw_route_stops)
-    # Filter to main variant only if variant descriptions present
     if {'variant_description_en','variant_description_tc','variant_description_sc'}.issubset(route_stops_df.columns):
-        mask_normal = (
-            route_stops_df['variant_description_en'].fillna('').str.lower().str.contains('normal') |
-            route_stops_df['variant_description_tc'].fillna('').str.contains('正常') |
-            route_stops_df['variant_description_sc'].fillna('').str.contains('正常')
+        desc_en = route_stops_df['variant_description_en'].fillna('').str.lower()
+        desc_tc = route_stops_df['variant_description_tc'].fillna('')
+        desc_sc = route_stops_df['variant_description_sc'].fillna('')
+        norm_mask = (
+            desc_en.str.contains('normal') |
+            desc_tc.str.contains('正常') |
+            desc_sc.str.contains('正常')
         )
         pre_filter_count = len(route_stops_df)
-        route_stops_df = route_stops_df[mask_normal].copy()
+        route_has_normal = norm_mask.groupby(route_stops_df['route_id']).transform('any')
+
+        normals_df = route_stops_df[norm_mask & route_has_normal]
+        fallback_df = route_stops_df[~route_has_normal]
+
+        if not normals_df.empty:
+            filtered_df = normals_df.copy()
+        elif not fallback_df.empty:
+            filtered_df = fallback_df.copy()
+        else:
+            filtered_df = route_stops_df.copy()
+
+        route_stops_df = filtered_df
         if not silent:
-            print(f"Filtered variants: kept {len(route_stops_df)}/{pre_filter_count} rows as main variant")
+            kept = len(route_stops_df)
+            if fallback_df.empty:
+                print(f"Filtered variants: retained {kept}/{pre_filter_count} rows (using 'Normal' variant where available)")
+            else:
+                selected_variants = fallback_df['variant_description_en'].dropna().unique().tolist()
+                print(f"Filtered variants: retained {kept}/{pre_filter_count} rows (no 'Normal' variant found; using fallback descriptions={selected_variants})")
+
+    # When multiple fallback variants exist (e.g. Special vs Short Working), keep the one with the largest stop footprint per direction
+    required_cols = {'route_id','route_seq','region','route_code','sequence'}
+    if required_cols.issubset(route_stops_df.columns) and not route_stops_df.empty:
+        stop_counts = (
+            route_stops_df
+            .groupby(['region','route_code','route_seq','route_id'], as_index=False)
+            .agg(stop_count=('sequence','count'))
+        )
+        if not stop_counts.empty:
+            best_variants = (
+                stop_counts
+                .sort_values(['region','route_code','route_seq','stop_count'], ascending=[True, True, True, False])
+                .drop_duplicates(subset=['region','route_code','route_seq'], keep='first')
+            )
+            before_variant_filter = len(route_stops_df)
+            route_stops_df = route_stops_df.merge(
+                best_variants[['region','route_code','route_seq','route_id']],
+                on=['region','route_code','route_seq','route_id'],
+                how='inner'
+            )
+            if not silent and before_variant_filter != len(route_stops_df):
+                print(
+                    "Variant selection: kept primary patterns with max stops per (region, route_code, route_seq); "
+                    f"rows {before_variant_filter}->{len(route_stops_df)}"
+                )
     # Deduplicate exact duplicates and conflicting sequence rows
     pre_dedupe = len(route_stops_df)
     route_stops_df.sort_values(['route_id','route_seq','sequence','stop_id'], inplace=True)
@@ -172,7 +217,7 @@ def process_and_load_gmb_data(raw_routes: dict, raw_stops: list, raw_route_stops
     if not silent:
         print(f"Loaded {len(route_stops_df)} records into 'gmb_stop_sequences' table.")
 
-def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_stops: list, raw_fares: list, engine: Engine, silent=False):
+def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_stops: list, engine: Engine, silent=False):
     if not all([raw_routes, raw_stops, raw_route_stops]):
         if not silent:
             print("One or more MTR Bus raw data lists are empty. Aborting MTR Bus data processing.")
@@ -239,17 +284,6 @@ def process_and_load_mtrbus_data(raw_routes: list, raw_stops: list, raw_route_st
     route_stops_df.to_sql('mtrbus_stop_sequences', engine, if_exists='replace', index=False)
     if not silent:
         print(f"Loaded {len(route_stops_df)} records into 'mtrbus_stop_sequences' table.")
-
-    if raw_fares:
-        if not silent:
-            print("Processing MTR Bus fares...")
-        fares_df = pd.DataFrame(raw_fares)
-        for col in ["origin_stop_id", "destination_stop_id"]:
-            if col in fares_df.columns:
-                fares_df[col] = fares_df[col].astype(str).map(orig_to_unified).fillna(fares_df[col])
-        fares_df.to_sql('mtrbus_fares', engine, if_exists='replace', index=False)
-        if not silent:
-            print(f"Loaded {len(fares_df)} records into 'mtrbus_fares' table.")
 
 def process_and_load_citybus_data(raw_routes: list, raw_stop_details: list, raw_route_sequences: list, engine: Engine, silent=False):
     if not all([raw_routes, raw_stop_details, raw_route_sequences]):
@@ -474,10 +508,12 @@ def process_and_load_nlb_data(raw_routes: list, raw_stops: list, raw_route_stops
         print(f"Loaded {len(route_stops_df)} records into 'nlb_stop_sequences' table.")
 
 def process_and_load_gov_gtfs_data(raw_frequencies: list, raw_trips: list, raw_routes: list,
-                                   raw_calendar: list, raw_calendar_dates: list, raw_fares: dict, 
-                                   raw_stops: list, raw_stop_times: list, engine: Engine, silent=False):
+                                   raw_calendar: list, raw_calendar_dates: list,
+                                   raw_stops: list, raw_stop_times: list, 
+                                   raw_fare_attributes: list = None, raw_fare_rules: list = None,
+                                   engine: Engine = None, silent=False):
     """Process and load Government GTFS data into the database."""
-    if not any([raw_frequencies, raw_trips, raw_routes, raw_calendar, raw_fares, raw_stops, raw_stop_times]):
+    if not any([raw_frequencies, raw_trips, raw_routes, raw_calendar, raw_stops, raw_stop_times, raw_fare_attributes, raw_fare_rules]):
         if not silent:
             print("All Government GTFS raw data lists are empty. Aborting Government GTFS data processing.")
         return
@@ -547,22 +583,21 @@ def process_and_load_gov_gtfs_data(raw_frequencies: list, raw_trips: list, raw_r
         if not silent:
             print(f"Loaded {len(calendar_dates_df)} records into 'gov_gtfs_calendar_dates' table.")
 
-    if raw_fares:
-        if raw_fares.get('attributes'):
-            if not silent:
-                print("Processing Government GTFS fare attributes...")
-            fare_attributes_df = pd.DataFrame(raw_fares['attributes'])
-            fare_attributes_df.to_sql('gov_gtfs_fare_attributes', engine, if_exists='replace', index=False)
-            if not silent:
-                print(f"Loaded {len(fare_attributes_df)} records into 'gov_gtfs_fare_attributes' table.")
+    if raw_fare_attributes:
+        if not silent:
+            print("Processing Government GTFS fare attributes...")
+        fare_attributes_df = pd.DataFrame(raw_fare_attributes)
+        fare_attributes_df.to_sql('gov_gtfs_fare_attributes', engine, if_exists='replace', index=False)
+        if not silent:
+            print(f"Loaded {len(fare_attributes_df)} records into 'gov_gtfs_fare_attributes' table.")
 
-        if raw_fares.get('rules'):
-            if not silent:
-                print("Processing Government GTFS fare rules...")
-            fare_rules_df = pd.DataFrame(raw_fares['rules'])
-            fare_rules_df.to_sql('gov_gtfs_fare_rules', engine, if_exists='replace', index=False)
-            if not silent:
-                print(f"Loaded {len(fare_rules_df)} records into 'gov_gtfs_fare_rules' table.")
+    if raw_fare_rules:
+        if not silent:
+            print("Processing Government GTFS fare rules...")
+        fare_rules_df = pd.DataFrame(raw_fare_rules)
+        fare_rules_df.to_sql('gov_gtfs_fare_rules', engine, if_exists='replace', index=False)
+        if not silent:
+            print(f"Loaded {len(fare_rules_df)} records into 'gov_gtfs_fare_rules' table.")
 
 def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine, silent=False):
     """Process and load CSDI bus routes data into the database."""
@@ -679,10 +714,7 @@ def process_and_load_csdi_data(raw_csdi_data: list, engine: Engine, silent=False
 
 def process_and_load_mtr_rails_data(
     raw_mtr_lines_and_stations: list,
-    raw_mtr_lines_fares: list,
     raw_light_rail_routes_and_stops: list,
-    raw_light_rail_fares: list,
-    raw_airport_express_fares: list,
     engine: Engine,
     silent=False
 ):
@@ -707,14 +739,6 @@ def process_and_load_mtr_rails_data(
         if not silent:
             print(f"Loaded {len(stations_gdf)} records into 'mtr_lines_and_stations' table.")
 
-    if raw_mtr_lines_fares:
-        if not silent:
-            print("Processing MTR heavy rail fares...")
-        mtr_fares_df = pd.DataFrame(raw_mtr_lines_fares)
-        mtr_fares_df.to_sql('mtr_lines_fares', engine, if_exists='replace', index=False)
-        if not silent:
-            print(f"Loaded {len(mtr_fares_df)} records into 'mtr_lines_fares' table.")
-
     # --- Light Rail ---
     if raw_light_rail_routes_and_stops:
         if not silent:
@@ -723,23 +747,6 @@ def process_and_load_mtr_rails_data(
         lrt_routes_stops_df.to_sql('light_rail_routes_and_stops', engine, if_exists='replace', index=False)
         if not silent:
             print(f"Loaded {len(lrt_routes_stops_df)} records into 'light_rail_routes_and_stops' table.")
-
-    if raw_light_rail_fares:
-        if not silent:
-            print("Processing Light Rail fares...")
-        lrt_fares_df = pd.DataFrame(raw_light_rail_fares)
-        lrt_fares_df.to_sql('light_rail_fares', engine, if_exists='replace', index=False)
-        if not silent:
-            print(f"Loaded {len(lrt_fares_df)} records into 'light_rail_fares' table.")
-
-    # --- Airport Express ---
-    if raw_airport_express_fares:
-        if not silent:
-            print("Processing Airport Express fares...")
-        ae_fares_df = pd.DataFrame(raw_airport_express_fares)
-        ae_fares_df.to_sql('airport_express_fares', engine, if_exists='replace', index=False)
-        if not silent:
-            print(f"Loaded {len(ae_fares_df)} records into 'airport_express_fares' table.")
 
 def process_and_load_journey_time_data(raw_journey_time_data: dict, raw_hourly_journey_time_data: dict, engine: Engine, silent=False):
     if not any([raw_journey_time_data, raw_hourly_journey_time_data]):

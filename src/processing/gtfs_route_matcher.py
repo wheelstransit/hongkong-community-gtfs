@@ -11,6 +11,7 @@ import pandas as pd
 from fuzzywuzzy import process
 from .shapes import lat_long_dist
 import os
+import re
 
 AGENCY_MAPPING = {
     'KMB': ['KMB', 'LWB', 'KMB+CTB', 'KWB'],
@@ -18,6 +19,15 @@ AGENCY_MAPPING = {
     'GMB': ['GMB'],
     'MTRB': ['LRTFeeder'],
     'NLB': ['NLB']
+}
+
+# Allow operator-specific tolerances when comparing stop counts against government GTFS
+STOP_DIFF_TOLERANCE = {
+    'KMB': 20,
+    'CTB': 12,
+    'GMB': 15,
+    'MTRB': 12,
+    'NLB': 15
 }
 
 def normalize_direction(direction: str) -> str:
@@ -205,7 +215,12 @@ def find_best_matches(operator_routes: pd.DataFrame,
             if operator_name == 'KMB' and getattr(op, 'bound', None) != getattr(gov, 'bound', None):
                 continue
             route_long_name = str(getattr(gov, 'route_long_name', '') or '')
-            if any(keyword in route_long_name.upper() for keyword in ['VIA', 'OMIT', 'SPECIAL', 'EXPRESS', 'SERVICE', 'CORRECTIONAL', 'HOSPITAL', 'SCHOOL']):
+            route_long_name_upper = route_long_name.upper()
+            # Strip parenthetical qualifiers (e.g. "(VIA ...)") before keyword screening to avoid
+            # excluding legitimate destinations that happen to mention hospitals, schools, etc.
+            sanitized = re.sub(r"\([^\)]*\)", " ", route_long_name_upper)
+            sanitized = re.sub(r"\s+", " ", sanitized).strip()
+            if any(keyword in sanitized for keyword in ['VIA', 'OMIT', 'SPECIAL', 'EXPRESS', 'SERVICE', 'CORRECTIONAL']):
                 continue
             stop_diff = abs(getattr(op, 'stop_count') - getattr(gov, 'stop_count'))
             if stop_diff > max_stop_diff:
@@ -593,7 +608,9 @@ def match_ctb_routes_to_government_gtfs(
 ) -> Dict[str, str]:
     """
     Match Citybus routes using TD ROUTE MDB:
-    - Find first ROUTE_ID where COMPANY_CODE='CTB' and SPECIAL_TYPE=0 and ROUTE_NAMEC == route number.
+    - First, try to find routes with SPECIAL_TYPE=0 (standard routes)
+    - For routes that don't have any SPECIAL_TYPE=0 variant, include the first available route
+      regardless of its SPECIAL_TYPE value
     - Return mapping route_short_name -> government route_id.
     """
     from src.ingest.td_route_mdb import get_ctb_route_id_map
@@ -847,7 +864,14 @@ def match_operator_routes_to_government_gtfs(
         return {}
     
     # Find best matches
-    matches = find_best_matches(operator_routes, gov_routes, engine, operator_name=operator_name)
+    stop_diff_limit = STOP_DIFF_TOLERANCE.get(operator_name, 10)
+    matches = find_best_matches(
+        operator_routes,
+        gov_routes,
+        engine,
+        max_stop_diff=stop_diff_limit,
+        operator_name=operator_name
+    )
     
     total_matches = len(matches)
     total_service_patterns = sum(len(service_list) for service_list in matches.values())
