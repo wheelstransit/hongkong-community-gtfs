@@ -1,0 +1,1854 @@
+{
+    "505": {
+        "To Siu Hong": [
+            {
+                "stop": "Sam Shing",
+                "first_train": "05:30",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Siu Lun",
+                "first_train": "05:31",
+                "last_train": "01:11"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:33",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:35",
+                "last_train": "01:15"
+            },
+            {
+                "stop": "Tuen Mun",
+                "first_train": "05:37",
+                "last_train": "01:17"
+            },
+            {
+                "stop": "Kin On",
+                "first_train": "05:39",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Shan King (South)",
+                "first_train": "05:41",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "Shan King (North)",
+                "first_train": "05:42",
+                "last_train": "01:23"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:44",
+                "last_train": "01:25"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:46",
+                "last_train": "01:27"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:48",
+                "last_train": "01:29"
+            },
+            {
+                "stop": "Tin King",
+                "first_train": "05:49",
+                "last_train": "01:30"
+            },
+            {
+                "stop": "Kin Sang",
+                "first_train": "05:51",
+                "last_train": "01:31"
+            },
+            {
+                "stop": "Ching Chung",
+                "first_train": "05:53",
+                "last_train": "01:33"
+            },
+            {
+                "stop": "Kei Lun",
+                "first_train": "05:55",
+                "last_train": "01:35"
+            }
+        ],
+        "To Sam Shing": [
+            {
+                "stop": "Siu Lun",
+                "first_train": "05:48",
+                "last_train": "01:21"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:46",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:44",
+                "last_train": "01:17"
+            },
+            {
+                "stop": "Tuen Mun",
+                "first_train": "05:42",
+                "last_train": "01:15"
+            },
+            {
+                "stop": "Kin On",
+                "first_train": "05:39",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Ming Kum",
+                "first_train": "05:37",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:35",
+                "last_train": "01:08"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:33",
+                "last_train": "01:06"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:32",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tin King",
+                "first_train": "05:31",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Kin Sang",
+                "first_train": "05:29",
+                "last_train": "01:02"
+            },
+            {
+                "stop": "Ching Chung",
+                "first_train": "05:28",
+                "last_train": "01:01"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:26",
+                "last_train": "00:59"
+            }
+        ]
+    },
+    "507": {
+        "To Tin King": [
+            {
+                "stop": "Tuen Mun Ferry Pier",
+                "first_train": "05:24",
+                "last_train": "00:56"
+            },
+            {
+                "stop": "Siu Hei",
+                "first_train": "05:26",
+                "last_train": "00:58"
+            },
+            {
+                "stop": "Tuen Mun Swimming Pool",
+                "first_train": "05:28",
+                "last_train": "01:00"
+            },
+            {
+                "stop": "Goodview Garden",
+                "first_train": "05:29",
+                "last_train": "01:01"
+            },
+            {
+                "stop": "Siu Lun",
+                "first_train": "05:31",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:33",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:35",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Tuen Mun",
+                "first_train": "05:37",
+                "last_train": "01:09"
+            },
+            {
+                "stop": "Ho Tin",
+                "first_train": "05:39",
+                "last_train": "01:11"
+            },
+            {
+                "stop": "Choy Yee Bridge",
+                "first_train": "05:40",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Ngan Wai",
+                "first_train": "05:41",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Tai Hing (South)",
+                "first_train": "05:43",
+                "last_train": "01:15"
+            },
+            {
+                "stop": "Tai Hing (North)",
+                "first_train": "05:45",
+                "last_train": "01:17"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:48",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:50",
+                "last_train": "01:21"
+            }
+        ],
+        "To Tuen Mun Ferry Pier": [
+            {
+                "stop": "Siu Hei",
+                "first_train": "05:52",
+                "last_train": "01:28"
+            },
+            {
+                "stop": "Tuen Mun Swimming Pool",
+                "first_train": "05:49",
+                "last_train": "01:25"
+            },
+            {
+                "stop": "Goodview Garden",
+                "first_train": "05:48",
+                "last_train": "01:24"
+            },
+            {
+                "stop": "Siu Lun",
+                "first_train": "05:46",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:44",
+                "last_train": "01:20"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:41",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "Tuen Mun",
+                "first_train": "05:39",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Ho Tin",
+                "first_train": "05:37",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Choy Yee Bridge",
+                "first_train": "05:36",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Ngan Wai",
+                "first_train": "05:34",
+                "last_train": "01:11"
+            },
+            {
+                "stop": "Tai Hing (South)",
+                "first_train": "05:33",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Tai Hing (North)",
+                "first_train": "05:31",
+                "last_train": "01:08"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:29",
+                "last_train": "01:06"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:28",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tin King (Platform 2)",
+                "first_train": "05:27",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Tin King (Platform 3)",
+                "first_train": "05:27",
+                "last_train": "01:04"
+            }
+        ]
+    },
+    "610": {
+        "To Yuen Long": [
+            {
+                "stop": "Tuen Mun Ferry Pier",
+                "first_train": "05:21",
+                "last_train": "00:36"
+            },
+            {
+                "stop": "Melody Garden",
+                "first_train": "05:22",
+                "last_train": "00:37"
+            },
+            {
+                "stop": "Butterfly",
+                "first_train": "05:24",
+                "last_train": "00:39"
+            },
+            {
+                "stop": "Light Rail Depot",
+                "first_train": "05:25",
+                "last_train": "00:40"
+            },
+            {
+                "stop": "Lung Mun",
+                "first_train": "05:27",
+                "last_train": "00:42"
+            },
+            {
+                "stop": "Tsing Shan Tsuen",
+                "first_train": "05:29",
+                "last_train": "00:44"
+            },
+            {
+                "stop": "Tsing Wun",
+                "first_train": "05:30",
+                "last_train": "00:45"
+            },
+            {
+                "stop": "Ming Kum",
+                "first_train": "05:32",
+                "last_train": "00:47"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:34",
+                "last_train": "00:49"
+            },
+            {
+                "stop": "Tai Hing (North)",
+                "first_train": "05:37",
+                "last_train": "00:52"
+            },
+            {
+                "stop": "Tai Hing (South)",
+                "first_train": "05:39",
+                "last_train": "00:54"
+            },
+            {
+                "stop": "Ngan Wai",
+                "first_train": "05:40",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Affluence",
+                "first_train": "05:42",
+                "last_train": "00:57"
+            },
+            {
+                "stop": "Tuen Mun Hospital",
+                "first_train": "05:43",
+                "last_train": "00:58"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:45",
+                "last_train": "00:59"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:47",
+                "last_train": "01:01"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:49",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:50",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:52",
+                "last_train": "01:06"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:55",
+                "last_train": "01:09"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:56",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:58",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "06:00",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "06:02",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "06:03",
+                "last_train": "01:17"
+            }
+        ],
+        "To Tuen Mun Ferry Pier": [
+            {
+                "stop": "Melody Garden",
+                "first_train": "06:02",
+                "last_train": "01:33"
+            },
+            {
+                "stop": "Butterfly",
+                "first_train": "06:00",
+                "last_train": "01:31"
+            },
+            {
+                "stop": "Light Rail Depot",
+                "first_train": "05:59",
+                "last_train": "01:30"
+            },
+            {
+                "stop": "Lung Mun",
+                "first_train": "05:57",
+                "last_train": "01:28"
+            },
+            {
+                "stop": "Tsing Shan Tsuen",
+                "first_train": "05:55",
+                "last_train": "01:26"
+            },
+            {
+                "stop": "Tsing Wun",
+                "first_train": "05:54",
+                "last_train": "01:25"
+            },
+            {
+                "stop": "Ming Kum",
+                "first_train": "05:52",
+                "last_train": "01:23"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:50",
+                "last_train": "01:21"
+            },
+            {
+                "stop": "Tai Hing (North)",
+                "first_train": "05:48",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Tai Hing (South)",
+                "first_train": "05:47",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "Ngan Wai",
+                "first_train": "05:45",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Affluence",
+                "first_train": "05:43",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Tuen Mun Hospital",
+                "first_train": "05:42",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:41",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:39",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:37",
+                "last_train": "01:08"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:36",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:34",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:31",
+                "last_train": "01:02"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:30",
+                "last_train": "01:01"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:28",
+                "last_train": "00:59"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "05:26",
+                "last_train": "00:57"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "05:24",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "05:22",
+                "last_train": "00:53"
+            },
+            {
+                "stop": "Yuen Long",
+                "first_train": "05:20",
+                "last_train": "00:51"
+            }
+        ]
+    },
+    "614": {
+        "To Yuen Long": [
+            {
+                "stop": "Tuen Mun Ferry Pier",
+                "first_train": "05:20",
+                "last_train": "00:44"
+            },
+            {
+                "stop": "Siu Hei",
+                "first_train": "05:22",
+                "last_train": "00:46"
+            },
+            {
+                "stop": "Tuen Mun Swimming Pool",
+                "first_train": "05:24",
+                "last_train": "00:48"
+            },
+            {
+                "stop": "Goodview Garden",
+                "first_train": "05:25",
+                "last_train": "00:49"
+            },
+            {
+                "stop": "Siu Lun",
+                "first_train": "05:27",
+                "last_train": "00:51"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:29",
+                "last_train": "00:53"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:31",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Pui To",
+                "first_train": "05:34",
+                "last_train": "00:58"
+            },
+            {
+                "stop": "Hoh Fuk Tong",
+                "first_train": "05:35",
+                "last_train": "00:59"
+            },
+            {
+                "stop": "San Hui",
+                "first_train": "05:36",
+                "last_train": "01:00"
+            },
+            {
+                "stop": "Prime View",
+                "first_train": "05:38",
+                "last_train": "01:02"
+            },
+            {
+                "stop": "Fung Tei",
+                "first_train": "05:39",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:41",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:43",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:45",
+                "last_train": "01:09"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:46",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:48",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:51",
+                "last_train": "01:15"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:52",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:54",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "05:56",
+                "last_train": "01:20"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "05:58",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "06:00",
+                "last_train": "01:23"
+            }
+        ],
+        "To Tuen Mun Ferry Pier": [
+            {
+                "stop": "Siu Hei",
+                "first_train": "05:57",
+                "last_train": "01:24"
+            },
+            {
+                "stop": "Tuen Mun Swimming Pool",
+                "first_train": "05:54",
+                "last_train": "01:21"
+            },
+            {
+                "stop": "Goodview Garden",
+                "first_train": "05:53",
+                "last_train": "01:20"
+            },
+            {
+                "stop": "Siu Lun",
+                "first_train": "05:51",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:49",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:47",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Pui To",
+                "first_train": "05:45",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Hoh Fuk Tong",
+                "first_train": "05:44",
+                "last_train": "01:11"
+            },
+            {
+                "stop": "San Hui",
+                "first_train": "05:43",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Prime View",
+                "first_train": "05:41",
+                "last_train": "01:08"
+            },
+            {
+                "stop": "Fung Tei",
+                "first_train": "05:40",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:38",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:36",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:34",
+                "last_train": "01:01"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:33",
+                "last_train": "01:00"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:31",
+                "last_train": "00:58"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:28",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:27",
+                "last_train": "00:54"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:25",
+                "last_train": "00:52"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "05:23",
+                "last_train": "00:50"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "05:21",
+                "last_train": "00:48"
+            },
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "05:19",
+                "last_train": "00:46"
+            },
+            {
+                "stop": "Yuen Long",
+                "first_train": "05:17",
+                "last_train": "00:44"
+            }
+        ]
+    },
+    "614P": {
+        "To Siu Hong": [
+            {
+                "stop": "Tuen Mun Ferry Pier",
+                "first_train": "05:37",
+                "last_train": "00:38"
+            },
+            {
+                "stop": "Siu Hei",
+                "first_train": "05:39",
+                "last_train": "00:40"
+            },
+            {
+                "stop": "Tuen Mun Swimming Pool",
+                "first_train": "05:41",
+                "last_train": "00:42"
+            },
+            {
+                "stop": "Goodview Garden",
+                "first_train": "05:42",
+                "last_train": "00:43"
+            },
+            {
+                "stop": "Siu Lun",
+                "first_train": "05:44",
+                "last_train": "00:45"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:46",
+                "last_train": "00:47"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:48",
+                "last_train": "00:49"
+            },
+            {
+                "stop": "Pui To",
+                "first_train": "05:51",
+                "last_train": "00:52"
+            },
+            {
+                "stop": "Hoh Fuk Tong",
+                "first_train": "05:52",
+                "last_train": "00:53"
+            },
+            {
+                "stop": "San Hui",
+                "first_train": "05:53",
+                "last_train": "00:54"
+            },
+            {
+                "stop": "Prime View",
+                "first_train": "05:55",
+                "last_train": "00:56"
+            },
+            {
+                "stop": "Fung Tei",
+                "first_train": "05:57",
+                "last_train": "00:57"
+            }
+        ],
+        "To Tuen Mun Ferry Pier": [
+            {
+                "stop": "Siu Hei",
+                "first_train": "06:17",
+                "last_train": "01:32"
+            },
+            {
+                "stop": "Tuen Mun Swimming Pool",
+                "first_train": "06:14",
+                "last_train": "01:29"
+            },
+            {
+                "stop": "Goodview Garden",
+                "first_train": "06:13",
+                "last_train": "01:28"
+            },
+            {
+                "stop": "Siu Lun",
+                "first_train": "06:11",
+                "last_train": "01:26"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "06:09",
+                "last_train": "01:24"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "06:07",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "Pui To",
+                "first_train": "06:05",
+                "last_train": "01:20"
+            },
+            {
+                "stop": "Hoh Fuk Tong",
+                "first_train": "06:04",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "San Hui",
+                "first_train": "06:02",
+                "last_train": "01:17"
+            },
+            {
+                "stop": "Prime View",
+                "first_train": "06:00",
+                "last_train": "01:15"
+            },
+            {
+                "stop": "Fung Tei",
+                "first_train": "05:59",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:58",
+                "last_train": "01:13"
+            }
+        ]
+    },
+    "615": {
+        "To Yuen Long": [
+            {
+                "stop": "Tuen Mun Ferry Pier",
+                "first_train": "05:18",
+                "last_train": "00:29"
+            },
+            {
+                "stop": "Melody Garden",
+                "first_train": "05:19",
+                "last_train": "00:30"
+            },
+            {
+                "stop": "Butterfly",
+                "first_train": "05:21",
+                "last_train": "00:32"
+            },
+            {
+                "stop": "Light Rail Depot",
+                "first_train": "05:22",
+                "last_train": "00:33"
+            },
+            {
+                "stop": "Lung Mun",
+                "first_train": "05:24",
+                "last_train": "00:35"
+            },
+            {
+                "stop": "Tsing Shan Tsuen",
+                "first_train": "05:26",
+                "last_train": "00:37"
+            },
+            {
+                "stop": "Tsing Wun",
+                "first_train": "05:27",
+                "last_train": "00:38"
+            },
+            {
+                "stop": "Ming Kum",
+                "first_train": "05:29",
+                "last_train": "00:40"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:31",
+                "last_train": "00:42"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:33",
+                "last_train": "00:44"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:35",
+                "last_train": "00:46"
+            },
+            {
+                "stop": "Tin King",
+                "first_train": "05:36",
+                "last_train": "00:47"
+            },
+            {
+                "stop": "Kin Sang",
+                "first_train": "05:37",
+                "last_train": "00:48"
+            },
+            {
+                "stop": "Ching Chung",
+                "first_train": "05:39",
+                "last_train": "00:50"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:42",
+                "last_train": "00:53"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:44",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:46",
+                "last_train": "00:57"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:47",
+                "last_train": "00:58"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:49",
+                "last_train": "01:00"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:52",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:53",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:55",
+                "last_train": "01:06"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "05:57",
+                "last_train": "01:08"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "05:59",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "06:01",
+                "last_train": "01:11"
+            }
+        ],
+        "To Tuen Mun Ferry Pier": [
+            {
+                "stop": "Melody Garden",
+                "first_train": "06:00",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Butterfly",
+                "first_train": "05:58",
+                "last_train": "01:08"
+            },
+            {
+                "stop": "Light Rail Depot",
+                "first_train": "05:57",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Lung Mun",
+                "first_train": "05:55",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tsing Shan Tsuen",
+                "first_train": "05:54",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "Tsing Wun",
+                "first_train": "05:53",
+                "last_train": "01:02"
+            },
+            {
+                "stop": "Ming Kum",
+                "first_train": "05:51",
+                "last_train": "01:00"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:49",
+                "last_train": "00:58"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:47",
+                "last_train": "00:56"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:46",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Tin King",
+                "first_train": "05:45",
+                "last_train": "00:54"
+            },
+            {
+                "stop": "Kin Sang",
+                "first_train": "05:43",
+                "last_train": "00:52"
+            },
+            {
+                "stop": "Ching Chung",
+                "first_train": "05:42",
+                "last_train": "00:51"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:39",
+                "last_train": "00:48"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:37",
+                "last_train": "00:46"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:35",
+                "last_train": "00:44"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:34",
+                "last_train": "00:43"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:32",
+                "last_train": "00:41"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:29",
+                "last_train": "00:38"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:28",
+                "last_train": "00:37"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:26",
+                "last_train": "00:36"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "05:24",
+                "last_train": "00:34"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "05:22",
+                "last_train": "00:32"
+            },
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "05:20",
+                "last_train": "00:30"
+            },
+            {
+                "stop": "Yuen Long",
+                "first_train": "05:18",
+                "last_train": "00:28"
+            }
+        ]
+    },
+    "615P": {
+        "To Siu Hong": [
+            {
+                "stop": "Tuen Mun Ferry Pier",
+                "first_train": "05:35",
+                "last_train": "00:30"
+            },
+            {
+                "stop": "Melody Garden",
+                "first_train": "05:36",
+                "last_train": "00:31"
+            },
+            {
+                "stop": "Butterfly",
+                "first_train": "05:38",
+                "last_train": "00:33"
+            },
+            {
+                "stop": "Light Rail Depot",
+                "first_train": "05:39",
+                "last_train": "00:34"
+            },
+            {
+                "stop": "Lung Mun",
+                "first_train": "05:41",
+                "last_train": "00:36"
+            },
+            {
+                "stop": "Tsing Shan Tsuen",
+                "first_train": "05:43",
+                "last_train": "00:38"
+            },
+            {
+                "stop": "Tsing Wun",
+                "first_train": "05:44",
+                "last_train": "00:39"
+            },
+            {
+                "stop": "Ming Kum",
+                "first_train": "05:46",
+                "last_train": "00:41"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:48",
+                "last_train": "00:43"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:50",
+                "last_train": "00:45"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:52",
+                "last_train": "00:47"
+            },
+            {
+                "stop": "Tin King",
+                "first_train": "05:53",
+                "last_train": "00:48"
+            },
+            {
+                "stop": "Kin Sang",
+                "first_train": "05:54",
+                "last_train": "00:49"
+            },
+            {
+                "stop": "Ching Chung",
+                "first_train": "05:56",
+                "last_train": "00:51"
+            },
+            {
+                "stop": "Kei Lun",
+                "first_train": "05:58",
+                "last_train": "00:53"
+            }
+        ],
+        "To Tuen Mun Ferry Pier": [
+            {
+                "stop": "Melody Garden",
+                "first_train": "05:52",
+                "last_train": "01:34"
+            },
+            {
+                "stop": "Butterfly",
+                "first_train": "05:50",
+                "last_train": "01:32"
+            },
+            {
+                "stop": "Light Rail Depot",
+                "first_train": "05:49",
+                "last_train": "01:31"
+            },
+            {
+                "stop": "Lung Mun",
+                "first_train": "05:47",
+                "last_train": "01:29"
+            },
+            {
+                "stop": "Tsing Shan Tsuen",
+                "first_train": "05:45",
+                "last_train": "01:27"
+            },
+            {
+                "stop": "Tsing Wun",
+                "first_train": "05:44",
+                "last_train": "01:26"
+            },
+            {
+                "stop": "Ming Kum",
+                "first_train": "05:42",
+                "last_train": "01:24"
+            },
+            {
+                "stop": "Shek Pai",
+                "first_train": "05:40",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "San Wai",
+                "first_train": "05:38",
+                "last_train": "01:20"
+            },
+            {
+                "stop": "Leung King",
+                "first_train": "05:37",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Tin King",
+                "first_train": "05:36",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "Kin Sang",
+                "first_train": "05:34",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Ching Chung",
+                "first_train": "05:33",
+                "last_train": "01:15"
+            },
+            {
+                "stop": "Kei Lun",
+                "first_train": "05:31",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:31",
+                "last_train": "01:13"
+            }
+        ]
+    },
+    "705": {
+        "circular": [
+            {
+                "stop": "Tin Shui Wai",
+                "first_train": "05:11",
+                "last_train": "01:02"
+            },
+            {
+                "stop": "Tin Tsz",
+                "first_train": "05:12",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "Tin Wu",
+                "first_train": "05:13",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Ginza",
+                "first_train": "05:14",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tin Wing",
+                "first_train": "05:16",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Tin Yuet",
+                "first_train": "05:19",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Tin Sau",
+                "first_train": "05:20",
+                "last_train": "01:11"
+            },
+            {
+                "stop": "Wetland Park",
+                "first_train": "05:22",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Tin Heng",
+                "first_train": "05:23",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Tin Yat",
+                "first_train": "05:25",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Tin Fu",
+                "first_train": "05:27",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "Chung Fu",
+                "first_train": "05:28",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Tin Shui",
+                "first_train": "05:31",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "Locwood",
+                "first_train": "05:32",
+                "last_train": "01:23"
+            },
+            {
+                "stop": "Tin Yiu",
+                "first_train": "05:34",
+                "last_train": "01:25"
+            }
+        ]
+    },
+    "706": {
+        "circular": [
+            {
+                "stop": "Tin Shui Wai",
+                "first_train": "05:20",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Tin Yiu",
+                "first_train": "05:22",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Locwood",
+                "first_train": "05:24",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Tin Shui",
+                "first_train": "05:26",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Chung Fu",
+                "first_train": "05:28",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "Tin Fu",
+                "first_train": "05:29",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Tin Yat",
+                "first_train": "05:30",
+                "last_train": "01:20"
+            },
+            {
+                "stop": "Tin Heng",
+                "first_train": "05:32",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "Wetland Park",
+                "first_train": "05:33",
+                "last_train": "01:23"
+            },
+            {
+                "stop": "Tin Sau",
+                "first_train": "05:35",
+                "last_train": "01:25"
+            },
+            {
+                "stop": "Tin Yuet",
+                "first_train": "05:37",
+                "last_train": "01:27"
+            },
+            {
+                "stop": "Tin Wing",
+                "first_train": "05:40",
+                "last_train": "01:30"
+            },
+            {
+                "stop": "Ginza",
+                "first_train": "05:41",
+                "last_train": "01:31"
+            },
+            {
+                "stop": "Tin Wu",
+                "first_train": "05:42",
+                "last_train": "01:32"
+            },
+            {
+                "stop": "Tin Tsz",
+                "first_train": "05:43",
+                "last_train": "01:33"
+            }
+        ]
+    },
+    "751": {
+        "To Tin Yat": [
+            {
+                "stop": "Yau Oi",
+                "first_train": "05:20",
+                "last_train": "00:45"
+            },
+            {
+                "stop": "On Ting",
+                "first_train": "05:21",
+                "last_train": "00:46"
+            },
+            {
+                "stop": "Town Centre",
+                "first_train": "05:23",
+                "last_train": "00:48"
+            },
+            {
+                "stop": "Tuen Mun",
+                "first_train": "05:25",
+                "last_train": "00:50"
+            },
+            {
+                "stop": "Ho Tin",
+                "first_train": "05:27",
+                "last_train": "00:52"
+            },
+            {
+                "stop": "Choy Yee Bridge",
+                "first_train": "05:28",
+                "last_train": "00:53"
+            },
+            {
+                "stop": "Affluence",
+                "first_train": "05:30",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Tuen Mun Hospital",
+                "first_train": "05:31",
+                "last_train": "00:56"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:32",
+                "last_train": "00:57"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:34",
+                "last_train": "00:59"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:36",
+                "last_train": "01:01"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:37",
+                "last_train": "01:02"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:39",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Hang Mei Tsuen",
+                "first_train": "05:42",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Tin Shui Wai",
+                "first_train": "05:45",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Tin Tsz",
+                "first_train": "05:47",
+                "last_train": "01:12"
+            },
+            {
+                "stop": "Tin Wu",
+                "first_train": "05:48",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Ginza",
+                "first_train": "05:49",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Tin Wing",
+                "first_train": "05:51",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Chestwood",
+                "first_train": "05:53",
+                "last_train": "01:18"
+            },
+            {
+                "stop": "Chung Fu",
+                "first_train": "05:57",
+                "last_train": "01:22"
+            },
+            {
+                "stop": "Tin Fu",
+                "first_train": "05:58",
+                "last_train": "01:23"
+            }
+        ],
+        "To Yau Oi": [
+            {
+                "stop": "Town Centre",
+                "first_train": "06:03",
+                "last_train": "01:31"
+            },
+            {
+                "stop": "Tuen Mun",
+                "first_train": "06:01",
+                "last_train": "01:29"
+            },
+            {
+                "stop": "Ho Tin",
+                "first_train": "05:59",
+                "last_train": "01:27"
+            },
+            {
+                "stop": "Choy Yee Bridge",
+                "first_train": "05:58",
+                "last_train": "01:26"
+            },
+            {
+                "stop": "Affluence",
+                "first_train": "05:56",
+                "last_train": "01:24"
+            },
+            {
+                "stop": "Tuen Mun Hospital",
+                "first_train": "05:55",
+                "last_train": "01:23"
+            },
+            {
+                "stop": "Siu Hong",
+                "first_train": "05:52",
+                "last_train": "01:21"
+            },
+            {
+                "stop": "Lam Tei",
+                "first_train": "05:50",
+                "last_train": "01:19"
+            },
+            {
+                "stop": "Nai Wai",
+                "first_train": "05:48",
+                "last_train": "01:17"
+            },
+            {
+                "stop": "Chung Uk Tsuen",
+                "first_train": "05:47",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Hung Shui Kiu",
+                "first_train": "05:45",
+                "last_train": "01:14"
+            },
+            {
+                "stop": "Hang Mei Tsuen",
+                "first_train": "05:41",
+                "last_train": "01:10"
+            },
+            {
+                "stop": "Tin Shui Wai",
+                "first_train": "05:38",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Tin Tsz",
+                "first_train": "05:36",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tin Wu",
+                "first_train": "05:35",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Ginza",
+                "first_train": "05:34",
+                "last_train": "01:03"
+            },
+            {
+                "stop": "Tin Wing",
+                "first_train": "05:33",
+                "last_train": "01:02"
+            },
+            {
+                "stop": "Chestwood",
+                "first_train": "05:30",
+                "last_train": "00:59"
+            },
+            {
+                "stop": "Chung Fu",
+                "first_train": "05:26",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Tin Fu",
+                "first_train": "05:25",
+                "last_train": "00:54"
+            },
+            {
+                "stop": "Tin Yat",
+                "first_train": "05:25",
+                "last_train": "00:54"
+            }
+        ]
+    },
+    "761P": {
+        "To Tin Yat": [
+            {
+                "stop": "Yuen Long",
+                "first_train": "05:28",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "05:30",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "05:32",
+                "last_train": "01:09"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "05:34",
+                "last_train": "01:11"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:36",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:38",
+                "last_train": "01:15"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:39",
+                "last_train": "01:16"
+            },
+            {
+                "stop": "Hang Mei Tsuen",
+                "first_train": "05:42",
+                "last_train": "01:20"
+            },
+            {
+                "stop": "Tin Yiu",
+                "first_train": "05:45",
+                "last_train": "01:23"
+            },
+            {
+                "stop": "Locwood",
+                "first_train": "05:46",
+                "last_train": "01:24"
+            },
+            {
+                "stop": "Tin Shui",
+                "first_train": "05:48",
+                "last_train": "01:26"
+            },
+            {
+                "stop": "Chung Fu",
+                "first_train": "05:50",
+                "last_train": "01:28"
+            },
+            {
+                "stop": "Tin Fu",
+                "first_train": "05:51",
+                "last_train": "01:29"
+            }
+        ],
+        "To Yuen Long": [
+            {
+                "stop": "Tai Tong Road",
+                "first_train": "05:49",
+                "last_train": "01:13"
+            },
+            {
+                "stop": "Hong Lok Road",
+                "first_train": "05:47",
+                "last_train": "01:11"
+            },
+            {
+                "stop": "Fung Nin Road",
+                "first_train": "05:45",
+                "last_train": "01:09"
+            },
+            {
+                "stop": "Shui Pin Wai",
+                "first_train": "05:43",
+                "last_train": "01:07"
+            },
+            {
+                "stop": "Ping Shan",
+                "first_train": "05:41",
+                "last_train": "01:05"
+            },
+            {
+                "stop": "Tong Fong Tsuen",
+                "first_train": "05:40",
+                "last_train": "01:04"
+            },
+            {
+                "stop": "Hang Mei Tsuen",
+                "first_train": "05:36",
+                "last_train": "01:01"
+            },
+            {
+                "stop": "Tin Yiu",
+                "first_train": "05:33",
+                "last_train": "00:58"
+            },
+            {
+                "stop": "Locwood",
+                "first_train": "05:31",
+                "last_train": "00:56"
+            },
+            {
+                "stop": "Tin Shui",
+                "first_train": "05:30",
+                "last_train": "00:55"
+            },
+            {
+                "stop": "Chung Fu",
+                "first_train": "05:27",
+                "last_train": "00:52"
+            },
+            {
+                "stop": "Tin Fu",
+                "first_train": "05:26",
+                "last_train": "00:51"
+            },
+            {
+                "stop": "Tin Yat",
+                "first_train": "05:26",
+                "last_train": "00:51"
+            }
+        ]
+    }
+}
