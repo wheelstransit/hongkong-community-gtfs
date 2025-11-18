@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Try the feed in action with [Wheels Router](https://planner.justusewheels.com/)
+~~Try the feed in action with [Wheels Router](https://planner.justusewheels.com/)~~ Server down ATM
 
 An open-source, community-driven project to generate accurate and up-to-date procedural GTFS and GTFS-RT feeds for Hong Kong's public transport network.
 
@@ -19,15 +19,8 @@ Currently realtime information as well as *the code of* Hong Kong Community GTFS
 ## How
 Instead of manual editing, this project generates the feeds **procedurally**. We combine data from open sources like OpenStreetMap with official data from portals like `data.gov.hk` to algorithmically build the GTFS files. This makes the process transparent, repeatable, and easier to keep up-to-date.
 
-## Quality
-The primary motivation for this project is the poor quality of existing data. Therefore, our core mission is to produce the most accurate, complete, and reliable GTFS feed possible for Hong Kong. **We pursue the best and finest quality not as a feature, but as a fundamental requirement.**
-
-## Credits
-HK-Bus-ETA/hk-bus-time-between-stops
-hkbus/hk-bus-crawling
-
 ## Hosted GTFS
-Sponsored by Wheels
+https://feed.justusewheels.com/
 
 ## License
 This code of the project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
@@ -55,7 +48,7 @@ This project uses datasets from the Hong Kong Special Administrative Region Gove
 
 ### 3. [hkbus/hk-bus-crawling](https://github.com/hkbus/hk-bus-crawling)
 
-A quite large portion of the code was taken indirectly from `hkbus/hk-bus-crawling`.
+A quite large portion of the code was taken indirectly from `hkbus/hk-bus-crawling` and the waypoint part of it.
 
 ### 4. [HK-Bus-ETA/hk-bus-time-between-stops](https://github.com/HK-Bus-ETA/hk-bus-time-between-stops)
 
