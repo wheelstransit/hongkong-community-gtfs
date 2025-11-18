@@ -8,10 +8,41 @@ set -e  # Exit on any error
 REPO_ROOT="$(pwd)"
 INPUT_GTFS="$REPO_ROOT/output/hk.gtfs.zip"
 OUTPUT_GTFS="$REPO_ROOT/hk.gtfs.zip"
-OSM_FILE="../hk.osm.bz2"
+
+OSM_FILE=""
+OSM_PARENT_DIR="$(realpath "$REPO_ROOT")"
+OSM_PBF_PATH="$OSM_PARENT_DIR/hong-kong-latest.osm.pbf"
+OSM_PBF_ALT1="$OSM_PARENT_DIR/hk.osm.pbf"
+OSM_BZ2_ALT="$OSM_PARENT_DIR/hk.osm.bz2"
 TEMP_DIR="/tmp/gtfs_processing"
 
 echo "Starting GTFS cleaning and shape generation process..."
+
+ensure_osmium() {
+    if command -v osmium >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "'osmium' not found. Attempting to install 'osmium-tool'..."
+    if ! command -v apt-get >/dev/null 2>&1; then
+        echo "Error: apt-get is not available. Please install 'osmium-tool' manually."
+        exit 1
+    fi
+    if [ "$EUID" -ne 0 ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo -n"
+        else
+            echo "Error: Need root privileges to install 'osmium-tool' and 'sudo' is not available."
+            echo "Please run this script as root or install 'osmium-tool' manually."
+            exit 1
+        fi
+    fi
+    $SUDO apt-get update -y
+    DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y osmium-tool
+    if ! command -v osmium >/dev/null 2>&1; then
+        echo "Error: Failed to install 'osmium-tool'."
+        exit 1
+    fi
+}
 
 # Check if input GTFS exists
 if [ ! -f "$INPUT_GTFS" ]; then
@@ -19,21 +50,26 @@ if [ ! -f "$INPUT_GTFS" ]; then
     exit 1
 fi
 
-# Check if OSM file exists, if not download and convert
-if [ ! -f "$OSM_FILE" ]; then
-    echo "OSM file not found at $OSM_FILE"
-    echo "Checking for hong-kong-latest.osm.pbf..."
-    
-    if [ ! -f "../hong-kong-latest.osm.pbf" ]; then
-        echo "Error: Neither hk.osm.bz2 nor hong-kong-latest.osm.pbf found in parent directory"
-        echo "Please ensure one of these files exists before running this script"
+
+if [ -f "$OSM_PBF_PATH" ]; then
+    OSM_FILE="$OSM_PBF_PATH"
+elif [ -f "$OSM_PBF_ALT1" ]; then
+    OSM_FILE="$OSM_PBF_ALT1"
+elif [ -f "$OSM_BZ2_ALT" ]; then
+    OSM_FILE="$OSM_BZ2_ALT"
+else
+    echo "No local OSM file found in repository directory. Downloading hong-kong-latest.osm.pbf..."
+    mkdir -p "$OSM_PARENT_DIR"
+    if command -v wget >/dev/null 2>&1; then
+        wget -O "$OSM_PBF_PATH" "https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf"
+    elif command -v curl >/dev/null 2>&1; then
+        curl -L -o "$OSM_PBF_PATH" "https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf"
+    else
         exit 1
     fi
-    
-    echo "Converting hong-kong-latest.osm.pbf to hk.osm.bz2..."
-    osmium cat ../hong-kong-latest.osm.pbf -o ../hk.osm.bz2
-    echo "OSM conversion completed"
+    OSM_FILE="$OSM_PBF_PATH"
 fi
+
 
 # Create temporary directory
 rm -rf "$TEMP_DIR"
@@ -76,7 +112,20 @@ mkdir -p "$TEMP_DIR/output"
 
 # Copy files to temporary locations for Docker
 echo "Preparing files for pfaedle..."
-cp "$(realpath "$OSM_FILE")" "$TEMP_DIR/osm/hk.osm.bz2"
+if [[ "$OSM_FILE" == *.pbf ]]; then
+    echo "Converting PBF to OSM XML (.bz2) with osmium..."
+    ensure_osmium
+    osmium cat "$(realpath "$OSM_FILE")" -o "$TEMP_DIR/osm/hk.osm.bz2"
+    OSM_DOCKER_FILE="hk.osm.bz2"
+else
+    if [[ "$OSM_FILE" == *.bz2 ]]; then
+        cp "$(realpath "$OSM_FILE")" "$TEMP_DIR/osm/hk.osm.bz2"
+        OSM_DOCKER_FILE="hk.osm.bz2"
+    else
+        cp "$(realpath "$OSM_FILE")" "$TEMP_DIR/osm/hk.osm"
+        OSM_DOCKER_FILE="hk.osm"
+    fi
+fi
 cp "$TEMP_DIR/cleaned.gtfs.zip" "$TEMP_DIR/gtfs/input.gtfs.zip"
 
 # Run pfaedle with Docker
@@ -86,7 +135,7 @@ docker run -i --rm \
     --volume "$TEMP_DIR/gtfs:/gtfs" \
     --volume "$TEMP_DIR/output:/gtfs-out" \
     ghcr.io/ad-freiburg/pfaedle:latest \
-    -x /osm/hk.osm.bz2 -i /gtfs/input.gtfs.zip
+    -x "/osm/$OSM_DOCKER_FILE" -i /gtfs/input.gtfs.zip
 
 # Check if pfaedle output exists (pfaedle outputs individual files, not a zip)
 if [ ! -f "$TEMP_DIR/output/agency.txt" ]; then

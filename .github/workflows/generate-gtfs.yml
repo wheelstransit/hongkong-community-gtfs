@@ -25,3 +25,32 @@ jobs:
           name: hk.gtfs.zip
           path: hk.gtfs.zip
           retention-days: 90
+
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    needs: generate-gtfs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download built GTFS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hk.gtfs.zip
+          path: dist
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
