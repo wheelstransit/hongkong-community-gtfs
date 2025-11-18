@@ -731,11 +731,6 @@ def match_gmb_routes_by_first_stop_location(
     
     gov_routes = pd.read_sql(gov_query, engine)
     
-    # Filter out special route variants
-    if not gov_routes.empty:
-        gov_routes = gov_routes[~gov_routes['route_long_name'].str.upper().str.contains(
-            'VIA|OMIT|SPECIAL|EXPRESS|SERVICE|CORRECTIONAL|HOSPITAL|SCHOOL', na=False)]
-    
     if gov_routes.empty:
         if debug:
             print("No government GMB routes found")

@@ -6,7 +6,7 @@
 set -e  # Exit on any error
 
 REPO_ROOT="$(pwd)"
-INPUT_GTFS="$REPO_ROOT/output/unified-agency-specific-stops.gtfs.zip"
+INPUT_GTFS="$REPO_ROOT/output/hk.gtfs.zip"
 OUTPUT_GTFS="$REPO_ROOT/hk.gtfs.zip"
 OSM_FILE="../hk.osm.bz2"
 TEMP_DIR="/tmp/gtfs_processing"

@@ -8,7 +8,7 @@ from concurrent.futures import ProcessPoolExecutor
 from src.processing.stop_unification import unify_stops_by_name_and_distance
 from src.processing.stop_times import generate_stop_times_for_agency_optimized as generate_stop_times_for_agency
 from src.processing.shapes import generate_shapes_from_csdi_files, match_trips_to_csdi_shapes
-from src.processing.utils import get_direction
+from src.processing.utils import get_direction, smart_title_case
 from src.processing.gtfs_route_matcher import match_operator_routes_to_government_gtfs, match_operator_routes_with_coop_fallback
 from src.processing.fares import (
     generate_fare_stages,
@@ -499,6 +499,8 @@ def generate_trip_headsigns(engine: Engine, trips_df: pd.DataFrame, silent: bool
             kmb_routes = pd.read_sql("SELECT unique_route_id, dest_en FROM kmb_routes", engine)
             parts = kmb_routes['unique_route_id'].str.split('_', expand=True)
             kmb_routes['route'] = parts[0]; kmb_routes['bound'] = parts[1]; kmb_routes['service_type'] = parts[2]
+            # Apply title case to destinations
+            kmb_routes['dest_en'] = kmb_routes['dest_en'].apply(smart_title_case)
             kmb_lookup = kmb_routes.drop_duplicates(['route','bound','service_type']).set_index(['route','bound','service_type'])['dest_en'].to_dict()
             dests = []
             for idx, row in kmb_subset.iterrows():
@@ -974,7 +976,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     station_to_platforms: dict = {}
     platform_amenity_to_stop_id: dict = {}
 
-    final_output_dir = os.path.join(output_dir, "unified_feed")
+    final_output_dir = os.path.join(output_dir, "gtfs")
     os.makedirs(final_output_dir, exist_ok=True)
 
     if not silent:
@@ -985,15 +987,182 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         {'agency_id': 'MTRB', 'agency_name': 'MTR Bus', 'agency_url': 'https://www.mtr.com.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
         {'agency_id': 'GMB', 'agency_name': 'Green Minibus', 'agency_url': 'https://td.gov.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
         {'agency_id': 'NLB', 'agency_name': 'New Lantao Bus', 'agency_url': 'https://www.nlb.com.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
+        {'agency_id': 'FERRY', 'agency_name': 'Ferry Services', 'agency_url': 'https://td.gov.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
         {'agency_id': 'MTRR', 'agency_name': 'MTR Rail', 'agency_url': 'https://www.mtr.com.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
         {'agency_id': 'LR', 'agency_name': 'Light Rail', 'agency_url': 'https://www.mtr.com.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
         {'agency_id': 'AE', 'agency_name': 'Airport Express', 'agency_url': 'https://www.mtr.com.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
         {'agency_id': 'PT', 'agency_name': 'Peak Tram', 'agency_url': 'https://thepeak.com.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
         {'agency_id': 'TRAM', 'agency_name': 'Tramways', 'agency_url': 'https://www.hktramways.com', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
+        {'agency_id': 'FERRY', 'agency_name': 'Ferry Services', 'agency_url': 'https://www.td.gov.hk', 'agency_timezone': 'Asia/Hong_Kong', 'agency_lang': 'en'},
     ]
     # we have zh-hant translations, check the end
     agency_df = pd.DataFrame(agencies)
     agency_df.to_csv(os.path.join(final_output_dir, 'agency.txt'), index=False)
+
+    # -- Ferry Routes (load before stops) --
+    if not silent:
+        print("Processing Ferry routes from government GTFS...")
+    
+    # Get all ferry routes from government GTFS
+    ferry_routes_df = pd.read_sql("""
+        SELECT route_id, route_short_name, route_long_name, agency_id, route_type 
+        FROM gov_gtfs_routes 
+        WHERE agency_id = 'FERRY'
+    """, engine)
+    
+    # Get all ferry trips
+    ferry_trips_df = pd.read_sql("""
+        SELECT gt.route_id, gt.service_id, gt.trip_id
+        FROM gov_gtfs_trips gt
+        WHERE gt.route_id IN (SELECT route_id FROM gov_gtfs_routes WHERE agency_id = 'FERRY')
+    """, engine)
+    
+    # Prefix trip_id and service_id with FERRY- to avoid conflicts
+    ferry_trips_df['trip_id'] = 'FERRY-' + ferry_trips_df['trip_id'].astype(str)
+    ferry_trips_df['service_id'] = 'FERRY-' + ferry_trips_df['service_id'].astype(str)
+    
+    # Add required columns for downstream processing
+    ferry_trips_df['agency_id'] = 'FERRY'
+    ferry_trips_df['original_service_id'] = ferry_trips_df['service_id']
+    ferry_trips_df['route_short_name'] = ferry_trips_df['route_id'].astype(str)
+    ferry_trips_df['direction_id'] = 0  # Default direction
+    
+    # Get ferry stop times
+    ferry_stoptimes_df = pd.read_sql("""
+        SELECT gst.trip_id, gst.arrival_time, gst.departure_time, gst.stop_id, 
+               gst.stop_sequence
+        FROM gov_gtfs_stop_times gst
+        WHERE gst.trip_id IN (
+            SELECT trip_id FROM gov_gtfs_trips WHERE route_id IN (
+                SELECT route_id FROM gov_gtfs_routes WHERE agency_id = 'FERRY'
+            )
+        )
+    """, engine)
+    
+    # Prefix stop_id and trip_id with FERRY-
+    ferry_stoptimes_df['trip_id'] = 'FERRY-' + ferry_stoptimes_df['trip_id'].astype(str)
+    ferry_stoptimes_df['stop_id'] = 'FERRY-' + ferry_stoptimes_df['stop_id'].astype(str)
+    
+    # Rename stop_sequence to match expected column name
+    if 'stop_sequence' in ferry_stoptimes_df.columns:
+        ferry_stoptimes_df.rename(columns={'stop_sequence': 'stop_sequence'}, inplace=True)
+    
+    # Get ferry stops
+    ferry_stops_df = pd.read_sql("""
+        SELECT DISTINCT gs.stop_id, gs.stop_name, gs.stop_lat, gs.stop_lon
+        FROM gov_gtfs_stops gs
+        WHERE gs.stop_id IN (
+            SELECT DISTINCT gst.stop_id FROM gov_gtfs_stop_times gst
+            WHERE gst.trip_id IN (
+                SELECT trip_id FROM gov_gtfs_trips WHERE route_id IN (
+                    SELECT route_id FROM gov_gtfs_routes WHERE agency_id = 'FERRY'
+                )
+            )
+        )
+    """, engine)
+    
+    # Prefix stop_id with FERRY-
+    if not ferry_stops_df.empty:
+        ferry_stops_df['stop_id'] = 'FERRY-' + ferry_stops_df['stop_id'].astype(str)
+        ferry_stops_df['location_type'] = 0
+        ferry_stops_df['parent_station'] = None
+    else:
+        # Create empty dataframe with required columns if no ferry stops
+        ferry_stops_df = pd.DataFrame(columns=['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station'])
+    
+    ferry_frequencies_list = []
+    ferry_trips_to_keep = set()
+    
+    if not ferry_stoptimes_df.empty and not ferry_trips_df.empty:
+        import re
+        for (route_id, service_id), group_trips in ferry_trips_df.groupby(['route_id', 'service_id']):
+            trip_ids = group_trips['trip_id'].tolist()
+            
+            first_stops = ferry_stoptimes_df[
+                (ferry_stoptimes_df['trip_id'].isin(trip_ids)) & 
+                (ferry_stoptimes_df['stop_sequence'] == 1)
+            ].copy()
+            
+            if first_stops.empty:
+                continue
+            
+            first_stops['departure_seconds'] = first_stops['departure_time'].apply(_hhmmss_to_seconds)
+            first_stops = first_stops.sort_values('departure_seconds').dropna(subset=['departure_seconds'])
+            
+            if len(first_stops) < 2:
+                # Single trip - create frequency with 86400 second headway (once per day)
+                template_trip_id = first_stops.iloc[0]['trip_id']
+                clean_trip_id = re.sub(r'-\d{4}$', '', template_trip_id)
+                start_time = _seconds_to_hhmmss(int(first_stops['departure_seconds'].iloc[0]))
+                
+                ferry_frequencies_list.append({
+                    'trip_id': clean_trip_id,
+                    'start_time': start_time,
+                    'end_time': start_time,
+                    'headway_secs': 86400
+                })
+                ferry_trips_to_keep.add(template_trip_id)
+                continue
+            
+            # Calculate intervals between consecutive trips
+            intervals = []
+            times = first_stops['departure_seconds'].tolist()
+            for i in range(len(times) - 1):
+                intervals.append(times[i + 1] - times[i])
+            
+            template_trip_id = first_stops.iloc[0]['trip_id']
+            clean_trip_id = re.sub(r'-\d{4}$', '', template_trip_id)
+            ferry_trips_to_keep.add(template_trip_id)
+            
+            if not intervals:
+                continue
+                
+            block_start_idx = 0
+            current_headway = max(intervals[0], 60)
+            
+            for i in range(1, len(intervals)):
+                next_headway = max(intervals[i], 60)
+                headway_diff = abs(next_headway - current_headway) / current_headway if current_headway > 0 else 0
+                
+                if headway_diff > 0.1 or i == len(intervals) - 1:
+                    block_end_idx = i if headway_diff > 0.1 else i + 1
+                    
+                    start_time = _seconds_to_hhmmss(int(times[block_start_idx]))
+                    end_time = _seconds_to_hhmmss(int(times[block_end_idx]))
+                    
+                    block_intervals = intervals[block_start_idx:block_end_idx]
+                    avg_headway = int(sum(block_intervals) / len(block_intervals)) if block_intervals else 1800
+                    
+                    ferry_frequencies_list.append({
+                        'trip_id': clean_trip_id,
+                        'start_time': start_time,
+                        'end_time': end_time,
+                        'headway_secs': max(60, avg_headway)
+                    })
+                    
+                    block_start_idx = i
+                    current_headway = max(intervals[i], 60)
+    
+    if ferry_trips_to_keep:
+        ferry_trips_df = ferry_trips_df[ferry_trips_df['trip_id'].isin(ferry_trips_to_keep)].copy()
+        ferry_stoptimes_df = ferry_stoptimes_df[ferry_stoptimes_df['trip_id'].isin(ferry_trips_to_keep)].copy()
+        
+        import re
+        trip_id_map = {old_id: re.sub(r'-\d{4}$', '', old_id) for old_id in ferry_trips_df['trip_id'].unique()}
+        ferry_trips_df['trip_id'] = ferry_trips_df['trip_id'].map(trip_id_map)
+        ferry_stoptimes_df['trip_id'] = ferry_stoptimes_df['trip_id'].map(lambda x: trip_id_map.get(x, x))
+        
+        if not silent:
+            print(f"Generated {len(ferry_frequencies_list)} frequency patterns for ferry routes")
+    
+    ferry_frequencies_df = pd.DataFrame(ferry_frequencies_list) if ferry_frequencies_list else pd.DataFrame(columns=['trip_id', 'start_time', 'end_time', 'headway_secs'])
+    
+    # Prepare final ferry routes
+    final_ferry_routes = ferry_routes_df.copy()
+    final_ferry_routes['agency_id'] = 'FERRY'
+    
+    if not silent:
+        print(f"Loaded {len(ferry_routes_df)} ferry routes, {len(ferry_trips_df)} trips, {len(ferry_stops_df)} stops")
 
     if not silent:
         print("Building stops.txt...")
@@ -1006,6 +1175,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         .str.replace(r'\s*\([A-Za-z0-9]{5}\)', '', regex=True)
         .str.replace(r'\s*-\s*', ' - ', regex=True)
         .str.replace(r'([^\s])(\([A-Za-z0-9]+\))', r'\1 \2', regex=True)
+        .apply(smart_title_case)
     )
     kmb_stops_gdf, kmb_duplicates_map = (kmb_stops_gdf, {})
     kmb_stops_gdf['stop_lat'] = kmb_stops_gdf.geometry.y
@@ -1150,6 +1320,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         gmb_stops_final,
         mtrbus_stops_final,
         nlb_stops_final,
+        ferry_stops_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']],
         mtr_stations_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']],
         real_platforms_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']],
         mtr_entrances_df,
@@ -1227,13 +1398,13 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         first_inbound = group[group['bound'] == 'I'].iloc[0] if not group[group['bound'] == 'I'].empty else None
 
         if first_outbound is not None and first_inbound is not None:
-            route_long_name = f"{first_outbound['orig_en']} - {first_inbound['orig_en']}"
+            route_long_name = f"{smart_title_case(first_outbound['orig_en'])} - {smart_title_case(first_inbound['orig_en'])}"
         elif first_outbound is not None:
-            route_long_name = f"{first_outbound['orig_en']} - {first_outbound['dest_en']}"
+            route_long_name = f"{smart_title_case(first_outbound['orig_en'])} - {smart_title_case(first_outbound['dest_en'])}"
         elif first_inbound is not None:
-            route_long_name = f"{first_inbound['orig_en']} - {first_inbound['dest_en']}"
+            route_long_name = f"{smart_title_case(first_inbound['orig_en'])} - {smart_title_case(first_inbound['dest_en'])}"
         else:
-            route_long_name = f"{group.iloc[0]['orig_en']} - {group.iloc[0]['dest_en']}" if not group.empty else ""
+            route_long_name = f"{smart_title_case(group.iloc[0]['orig_en'])} - {smart_title_case(group.iloc[0]['dest_en'])}" if not group.empty else ""
 
         final_kmb_routes_list.append({
             'route_id': f"KMB-{route_num}",
@@ -1278,12 +1449,12 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                         'direction_id': direction_id,
                         'bound': bound,
                         'route_short_name': route_short_name,
-                        'route_long_name': f"{route_info.get('orig_en', '')} - {route_info.get('dest_en', '')}",
+                        'route_long_name': f"{smart_title_case(route_info.get('orig_en', ''))} - {smart_title_case(route_info.get('dest_en', ''))}",
                         'original_service_id': match['gov_service_id'],
                         'gov_route_id': match['gov_route_id'],  # Add this for proper shape matching
                         'service_type': service_type,
-                        'origin_en': route_info.get('orig_en', ''),
-                        'destination_en': route_info.get('dest_en', ''),
+                        'origin_en': smart_title_case(route_info.get('orig_en', '')),
+                        'destination_en': smart_title_case(route_info.get('dest_en', '')),
                         'agency_id': 'KMB'
                     })
     
@@ -1298,11 +1469,53 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             'route_long_name', 'original_service_id', 'gov_route_id', 'service_type', 'origin_en', 'destination_en'
         ])
     
-    # Ensure required columns exist for downstream processing
+    if not silent:
+        print("Creating dummy trips for unmatched KMB routes...")
+    
+    matched_route_keys = set()
+    if kmb_route_matches:
+        matched_route_keys = set(kmb_route_matches.keys())
+    
+    unmatched_trips_list = []
+    for _, route_info in kmb_routes_df.iterrows():
+        route_short_name = route_info['route']
+        bound = route_info['bound']
+        service_type = route_info['service_type']
+        route_key = f"{route_short_name}-{bound}-{service_type}"
+        
+        if route_key not in matched_route_keys:
+            direction_id = 1 if bound == 'I' else 0
+            dummy_service_id = 'NEVER'
+            
+            unmatched_trips_list.append({
+                'route_id': f"KMB-{route_short_name}",
+                'service_id': f"KMB-{route_short_name}-{bound}-{dummy_service_id}",
+                'trip_id': f"KMB-{route_short_name}-{bound}-{service_type}-{dummy_service_id}",
+                'direction_id': direction_id,
+                'bound': bound,
+                'route_short_name': route_short_name,
+                'route_long_name': f"{smart_title_case(route_info.get('orig_en', ''))} - {smart_title_case(route_info.get('dest_en', ''))}",
+                'original_service_id': dummy_service_id,
+                'gov_route_id': None,
+                'service_type': service_type,
+                'origin_en': smart_title_case(route_info.get('orig_en', '')),
+                'destination_en': smart_title_case(route_info.get('dest_en', '')),
+                'agency_id': 'KMB',
+                'is_dummy': True
+            })
+    
+    if unmatched_trips_list:
+        unmatched_trips_df = pd.DataFrame(unmatched_trips_list)
+        kmb_trips_df = pd.concat([kmb_trips_df, unmatched_trips_df], ignore_index=True)
+        if not silent:
+            print(f"Created {len(unmatched_trips_list)} dummy trip(s) for unmatched KMB routes")
+    
     if 'original_service_id' not in kmb_trips_df.columns:
         kmb_trips_df['original_service_id'] = 'DEFAULT'
     if 'route_short_name' not in kmb_trips_df.columns:
         kmb_trips_df['route_short_name'] = ''
+    if 'is_dummy' not in kmb_trips_df.columns:
+        kmb_trips_df['is_dummy'] = False
     kmb_trips_df.drop_duplicates(subset=['trip_id'], keep='first', inplace=True)
 
     # -- Citybus --
@@ -1400,6 +1613,54 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         ])
     # Remove duplicate trips that might be created from multiple citybus route entries
     ctb_trips_df.drop_duplicates(subset=['trip_id'], keep='first', inplace=True)
+    
+    # Create dummy trips for unmatched routes (for GTFS-RT activation)
+    if not silent:
+        print("Creating dummy trips for unmatched Citybus routes...")
+    
+    # Get all matched route short names
+    matched_route_short_names = set()
+    if ctb_route_matches:
+        matched_route_short_names = set(ctb_route_matches.keys())
+    
+    # Find all unmatched routes from the database
+    unmatched_ctb_trips_list = []
+    for _, route_info in ctb_routes_df.iterrows():
+        route_short_name = route_info['route']
+        direction = route_info['dir']
+        
+        # If this route wasn't matched, create a dummy trip
+        if route_short_name not in matched_route_short_names:
+            direction_id = 1 if direction == 'inbound' else 0
+            bound = 'I' if direction == 'inbound' else 'O'
+            dummy_service_id = 'NEVER'  # Special service ID that never runs
+            
+            unmatched_ctb_trips_list.append({
+                'route_id': f"CTB-{route_short_name}",
+                'service_id': f"CTB-{route_short_name}-{direction}-{dummy_service_id}",
+                'trip_id': f"CTB-{route_short_name}-{direction}-{dummy_service_id}",
+                'direction_id': direction_id,
+                'bound': bound,
+                'route_short_name': route_short_name,
+                'route_long_name': f"{route_info.get('orig_en', '')} - {route_info.get('dest_en', '')}",
+                'original_service_id': dummy_service_id,
+                'unique_route_id': route_info['unique_route_id'],
+                'origin_en': route_info.get('orig_en', ''),
+                'destination_en': route_info.get('dest_en', ''),
+                'gov_route_id': None,  # No government route match
+                'agency_id': 'CTB',
+                'is_dummy': True  # Mark as dummy for downstream processing
+            })
+    
+    if unmatched_ctb_trips_list:
+        unmatched_ctb_trips_df = pd.DataFrame(unmatched_ctb_trips_list)
+        ctb_trips_df = pd.concat([ctb_trips_df, unmatched_ctb_trips_df], ignore_index=True)
+        if not silent:
+            print(f"Created {len(unmatched_ctb_trips_list)} dummy trip(s) for unmatched Citybus routes")
+    
+    # Ensure is_dummy column exists
+    if 'is_dummy' not in ctb_trips_df.columns:
+        ctb_trips_df['is_dummy'] = False
     
     # Load CTB stop sequences with special handling for circular routes
     if not silent:
@@ -1869,6 +2130,9 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     nlb_stoptimes_df['stop_id'] = 'NLB-' + nlb_stoptimes_df['stopId'].astype(str)
     nlb_stoptimes_df['stop_id'] = nlb_stoptimes_df['stop_id'].replace(nlb_duplicates_map)
 
+    if not silent:
+        print(f"Loaded {len(final_ferry_routes)} ferry routes, {len(ferry_trips_df)} trips, {len(ferry_stops_df)} stops, {len(ferry_stoptimes_df)} stop_times")
+
     # -- MTR Rail --
     if not silent:
         print("==========================================")
@@ -2185,8 +2449,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     # --- Combine & Standardize--
     if not silent:
         print("Combining and standardizing data for final GTFS files...")
-    final_routes_df = pd.concat([final_kmb_routes, final_ctb_routes, final_gmb_routes, final_mtrbus_routes, final_nlb_routes, mtr_routes_df, lr_routes_df], ignore_index=True)
-    color_map = {'KMB': 'EE171F', 'CTB': '0053B9', 'NLB': '8AB666', 'MTRB': 'AE2A42', 'GMB': '34C759', 'MTRR': '003DA5', 'LR': 'FF8800'}
+    final_routes_df = pd.concat([final_kmb_routes, final_ctb_routes, final_gmb_routes, final_mtrbus_routes, final_nlb_routes, final_ferry_routes, mtr_routes_df, lr_routes_df], ignore_index=True)
+    color_map = {'KMB': 'EE171F', 'CTB': '0053B9', 'NLB': '8AB666', 'MTRB': 'AE2A42', 'GMB': '34C759', 'MTRR': '003DA5', 'LR': 'FF8800', 'FERRY': '0099CC'}
     
     def get_route_color(agency_id):
         if not isinstance(agency_id, str):
@@ -2237,7 +2501,149 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             final_routes_df[col] = None
     final_routes_output_df = final_routes_df[routes_output_cols]
 
-    all_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df, mtr_trips_df, lr_trips_df], ignore_index=True)
+    all_trips_df = pd.concat([kmb_trips_df, ctb_trips_df, gmb_trips_df, mtrbus_trips_df, nlb_trips_df, ferry_trips_df, mtr_trips_df, lr_trips_df], ignore_index=True)
+
+    # --- Check for flipped co-op routes ---
+    if not silent:
+        print("Checking for flipped directions in co-op routes...")
+    
+    try:
+        # Get co-op routes from government GTFS
+        coop_routes_df = pd.read_sql(
+            "SELECT DISTINCT route_short_name FROM gov_gtfs_routes WHERE agency_id = 'KMB+CTB'",
+            engine
+        )
+        coop_route_numbers = coop_routes_df['route_short_name'].tolist()
+        
+        if coop_route_numbers:
+            flipped_routes = []
+            
+            # Get all stop_times DataFrames
+            all_stoptimes_dfs = {
+                'KMB': kmb_stoptimes_df,
+                'CTB': ctb_stoptimes_df
+            }
+            
+            for route_num in coop_route_numbers:
+                # Get KMB and CTB trips for this route
+                kmb_route_trips = kmb_trips_df[kmb_trips_df['route_short_name'] == route_num]
+                ctb_route_trips = ctb_trips_df[ctb_trips_df['route_short_name'] == route_num]
+                
+                if kmb_route_trips.empty or ctb_route_trips.empty:
+                    continue
+                
+                # For each direction, check if coordinates are flipped
+                for direction in [0, 1]:
+                    kmb_dir_trips = kmb_route_trips[kmb_route_trips['direction_id'] == direction]
+                    ctb_dir_trips = ctb_route_trips[ctb_route_trips['direction_id'] == direction]
+                    
+                    if kmb_dir_trips.empty or ctb_dir_trips.empty:
+                        continue
+                    
+                    # Get the most frequent trip (by service_id frequency)
+                    kmb_trip_id = kmb_dir_trips.iloc[0]['trip_id']
+                    ctb_trip_id = ctb_dir_trips.iloc[0]['trip_id']
+                    
+                    # Get stop sequences for these trips
+                    kmb_stops = all_stop_times_df[all_stop_times_df['trip_id'] == kmb_trip_id].sort_values('stop_sequence')
+                    ctb_stops = all_stop_times_df[all_stop_times_df['trip_id'] == ctb_trip_id].sort_values('stop_sequence')
+                    
+                    if len(kmb_stops) < 2 or len(ctb_stops) < 2:
+                        continue
+                    
+                    # Get first and last stop_ids
+                    kmb_first_stop = kmb_stops.iloc[0]['stop_id']
+                    kmb_last_stop = kmb_stops.iloc[-1]['stop_id']
+                    ctb_first_stop = ctb_stops.iloc[0]['stop_id']
+                    ctb_last_stop = ctb_stops.iloc[-1]['stop_id']
+                    
+                    # Get coordinates from unified stops
+                    stops_coords_query = """
+                    SELECT stop_id, stop_lat, stop_lon 
+                    FROM (
+                        SELECT 'KMB-' || stop_id as stop_id, stop_lat, stop_lon FROM kmb_stops
+                        UNION ALL
+                        SELECT 'CTB-' || stop_id as stop_id, stop_lat, stop_lon FROM citybus_stops
+                    ) unified_stops
+                    WHERE stop_id IN (%s, %s, %s, %s)
+                    """
+                    
+                    coords_df = pd.read_sql_query(
+                        stops_coords_query,
+                        engine,
+                        params=(kmb_first_stop, kmb_last_stop, ctb_first_stop, ctb_last_stop)
+                    )
+                    
+                    if len(coords_df) < 4:
+                        continue
+                    
+                    # Get coordinates
+                    kmb_first = coords_df[coords_df['stop_id'] == kmb_first_stop].iloc[0] if not coords_df[coords_df['stop_id'] == kmb_first_stop].empty else None
+                    kmb_last = coords_df[coords_df['stop_id'] == kmb_last_stop].iloc[0] if not coords_df[coords_df['stop_id'] == kmb_last_stop].empty else None
+                    ctb_first = coords_df[coords_df['stop_id'] == ctb_first_stop].iloc[0] if not coords_df[coords_df['stop_id'] == ctb_first_stop].empty else None
+                    ctb_last = coords_df[coords_df['stop_id'] == ctb_last_stop].iloc[0] if not coords_df[coords_df['stop_id'] == ctb_last_stop].empty else None
+                    
+                    if None in (kmb_first, kmb_last, ctb_first, ctb_last):
+                        continue
+                    
+                    # Calculate distances
+                    # Distance from KMB first to CTB first
+                    dist_first_to_first = ((kmb_first['stop_lat'] - ctb_first['stop_lat'])**2 + 
+                                          (kmb_first['stop_lon'] - ctb_first['stop_lon'])**2)**0.5
+                    
+                    # Distance from KMB first to CTB last (this indicates a flip)
+                    dist_first_to_last = ((kmb_first['stop_lat'] - ctb_last['stop_lat'])**2 + 
+                                         (kmb_first['stop_lon'] - ctb_last['stop_lon'])**2)**0.5
+                    
+                    # Distance from KMB last to CTB last
+                    dist_last_to_last = ((kmb_last['stop_lat'] - ctb_last['stop_lat'])**2 + 
+                                        (kmb_last['stop_lon'] - ctb_last['stop_lon'])**2)**0.5
+                    
+                    # Distance from KMB last to CTB first (this indicates a flip)
+                    dist_last_to_first = ((kmb_last['stop_lat'] - ctb_first['stop_lat'])**2 + 
+                                         (kmb_last['stop_lon'] - ctb_first['stop_lon'])**2)**0.5
+                    
+                    # If flipped: KMB first is closer to CTB last, and KMB last is closer to CTB first
+                    normal_match = dist_first_to_first + dist_last_to_last
+                    flipped_match = dist_first_to_last + dist_last_to_first
+                    
+                    # Threshold: if flipped match is significantly better (20% difference)
+                    if flipped_match < normal_match * 0.8:
+                        flipped_routes.append({
+                            'route': route_num,
+                            'direction_id': direction,
+                            'kmb_first_stop': kmb_first_stop,
+                            'kmb_last_stop': kmb_last_stop,
+                            'ctb_first_stop': ctb_first_stop,
+                            'ctb_last_stop': ctb_last_stop,
+                            'kmb_first_lat': kmb_first['stop_lat'],
+                            'kmb_first_lon': kmb_first['stop_lon'],
+                            'kmb_last_lat': kmb_last['stop_lat'],
+                            'kmb_last_lon': kmb_last['stop_lon'],
+                            'ctb_first_lat': ctb_first['stop_lat'],
+                            'ctb_first_lon': ctb_first['stop_lon'],
+                            'ctb_last_lat': ctb_last['stop_lat'],
+                            'ctb_last_lon': ctb_last['stop_lon'],
+                            'normal_distance': normal_match,
+                            'flipped_distance': flipped_match,
+                            'confidence': (normal_match - flipped_match) / normal_match
+                        })
+            
+            # Write flipped routes to CSV
+            if flipped_routes:
+                flipped_df = pd.DataFrame(flipped_routes)
+                output_path = output_dir / 'flipped_coop_routes.csv'
+                flipped_df.to_csv(output_path, index=False)
+                if not silent:
+                    print(f"⚠️  Found {len(flipped_routes)} potentially flipped direction(s) in co-op routes")
+                    print(f"    Details saved to: {output_path}")
+            else:
+                if not silent:
+                    print("✓ No flipped directions detected in co-op routes")
+    
+    except Exception as e:
+        if not silent:
+            print(f"Warning: Co-op route flip detection failed: {e}")
 
     # Attach agency to government trips for scoping
     gov_trips_with_route_info['route_id'] = gov_trips_with_route_info['route_id'].astype(str)
@@ -2258,7 +2664,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         'CTB': {'CTB', 'NWFB'},
         'GMB': {'GMB'},
         'MTRB': {'LRTFeeder'},
-        'NLB': {'NLB'}
+        'NLB': {'NLB'},
+        'FERRY': {'FERRY'}
     }
 
     def build_trip_id_mapping_for(unified_prefix: str) -> pd.DataFrame:
@@ -2303,7 +2710,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         build_trip_id_mapping_for('CTB'),
         build_trip_id_mapping_for('GMB'),
         build_trip_id_mapping_for('MTRB'),
-        build_trip_id_mapping_for('NLB')
+        build_trip_id_mapping_for('NLB'),
+        build_trip_id_mapping_for('FERRY')
     ]
     trip_id_mapping = pd.concat([m for m in mappings if m is not None and not m.empty], ignore_index=True).drop_duplicates()
 
@@ -2328,6 +2736,12 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         if not silent:
             missing_trip_count = fallback_frequencies_df['trip_id'].nunique()
             print(f"Generated fallback frequencies for {missing_trip_count} trip(s) using schedule-derived headways.")
+
+    # --- Ferry Frequencies ---
+    if not ferry_frequencies_df.empty:
+        final_frequencies_df = pd.concat([final_frequencies_df, ferry_frequencies_df], ignore_index=True)
+        if not silent:
+            print(f"Added {len(ferry_frequencies_df)} ferry frequency patterns")
 
     # --- MTR/LR Frequencies ---
     try:
@@ -2449,7 +2863,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_nlb_stoptimes = nlb_stoptimes_df.rename(columns={'sequence': 'stop_sequence'})
     final_mtr_stoptimes = mtr_stoptimes_df
     final_lr_stoptimes = lr_stoptimes_df
-    final_stop_times_df = pd.concat([final_kmb_stoptimes, final_ctb_stoptimes, final_gmb_stoptimes, final_mtrbus_stoptimes, final_nlb_stoptimes, final_mtr_stoptimes, final_lr_stoptimes], ignore_index=True)
+    final_stop_times_df = pd.concat([final_kmb_stoptimes, final_ctb_stoptimes, final_gmb_stoptimes, final_mtrbus_stoptimes, final_nlb_stoptimes, ferry_stoptimes_df, final_mtr_stoptimes, final_lr_stoptimes], ignore_index=True)
     final_stop_times_df['stop_id'] = final_stop_times_df['stop_id'].replace(master_duplicates_map)
 
     final_stop_times_output_df = final_stop_times_df[stop_times_cols].copy()
@@ -2899,6 +3313,29 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     final_calendar_df = final_calendar_df.drop_duplicates(subset=['service_id'])
     final_calendar_dates_df = final_calendar_dates_df.drop_duplicates(subset=['service_id', 'date'])
 
+    # Add dummy "NEVER" service entries for unmatched routes (for GTFS-RT activation)
+    # These services have dates in the past so they never actually run
+    dummy_service_ids = final_trips_df[final_trips_df['original_service_id'] == 'NEVER']['service_id'].unique()
+    if len(dummy_service_ids) > 0:
+        if not silent:
+            print(f"Creating {len(dummy_service_ids)} dummy calendar entries for NEVER services...")
+        dummy_calendar_entries = []
+        for service_id in dummy_service_ids:
+            dummy_calendar_entries.append({
+                'service_id': service_id,
+                'monday': 0,
+                'tuesday': 0,
+                'wednesday': 0,
+                'thursday': 0,
+                'friday': 0,
+                'saturday': 0,
+                'sunday': 0,
+                'start_date': 19700101,  # Very old date, service never runs
+                'end_date': 19700101
+            })
+        dummy_calendar_df = pd.DataFrame(dummy_calendar_entries)
+        final_calendar_df = pd.concat([final_calendar_df, dummy_calendar_df], ignore_index=True)
+        final_calendar_df = final_calendar_df.drop_duplicates(subset=['service_id'])
 
     with PhaseTimer('Write calendar', phase_timings, silent):
         final_calendar_df.to_csv(os.path.join(final_output_dir, 'calendar.txt'), index=False)
@@ -3112,8 +3549,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     
     # --- 5. Zip the feed ---
     if not silent:
-        print("Zipping the unified GTFS feed...")
-    zip_path = os.path.join(output_dir, 'unified-agency-specific-stops.gtfs.zip')
+        print("Zipping the GTFS feed...")
+    zip_path = os.path.join(output_dir, 'hk.gtfs.zip')
     with PhaseTimer('Zip feed', phase_timings, silent):
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for filename in os.listdir(final_output_dir):
