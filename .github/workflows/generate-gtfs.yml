@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '1 22 * * *'
   workflow_dispatch: 
+  push:
+    branches:
+      - '**'
 
 jobs:
   generate-gtfs:
@@ -40,6 +43,7 @@ jobs:
     name: Deploy to GitHub Pages
     needs: generate-gtfs
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     permissions:
       pages: write
       id-token: write
