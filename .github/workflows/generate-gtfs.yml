@@ -15,6 +15,16 @@ jobs:
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Install gtfstidy
+        run: |
+          go install github.com/patrickbr/gtfstidy@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
       
       - name: Run full GTFS pipeline
         run: bash full_pipeline.sh
@@ -42,6 +52,33 @@ jobs:
         with:
           name: hk.gtfs.zip
           path: dist
+
+      - name: Create index.html
+        run: |
+          cat > dist/index.html << 'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width,initial-scale=1" />
+            <title>Hong Kong Community GTFS</title>
+            <style>
+              body { background:#fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Noto Sans', 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji'; margin: 2rem; line-height: 1.5; }
+              a { color: #0969da; text-decoration: none; }
+              a:hover { text-decoration: underline; }
+            </style>
+          </head>
+          <body>
+            <img src="https://raw.githubusercontent.com/wheelstransit/hongkong-community-gtfs/main/images/logomark-light.png" alt="Hong Kong Community GTFS" style="height:48px; width:auto; display:block;" />
+            <p>
+              Repository: <a href="https://github.com/wheelstransit/hongkong-community-gtfs">github.com/wheelstransit/hongkong-community-gtfs</a>
+            </p>
+            <p>
+              Latest feed: <a href="./hk.gtfs.zip" download>hk.gtfs.zip</a>
+            </p>
+          </body>
+          </html>
+          EOF
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
