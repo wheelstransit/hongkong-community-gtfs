@@ -131,6 +131,7 @@ cp "$TEMP_DIR/cleaned.gtfs.zip" "$TEMP_DIR/gtfs/input.gtfs.zip"
 # Run pfaedle with Docker
 echo "Running pfaedle to generate shapes..."
 docker run -i --rm \
+    --user "$(id -u):$(id -g)" \
     --volume "$TEMP_DIR/osm:/osm" \
     --volume "$TEMP_DIR/gtfs:/gtfs" \
     --volume "$TEMP_DIR/output:/gtfs-out" \
