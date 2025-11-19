@@ -1270,10 +1270,10 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                 coords = prec.get('coordinates') or {}
                 platform_rows.append({
                     'stop_id': stop_id_val,
-                    'stop_name': plat_name,
+                    'stop_name': (f"Platform {platform_code}" if platform_code else plat_name),
                     'stop_lat': coords.get('lat'),
                     'stop_lon': coords.get('lon'),
-                    'location_type': 0,
+                    'location_type': 4,
                     'parent_station': f"MTR-{scode}",
                     'platform_code': platform_code
                 })
@@ -1321,8 +1321,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         mtrbus_stops_final,
         nlb_stops_final,
         ferry_stops_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']],
-        mtr_stations_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']],
-        real_platforms_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']],
+        mtr_stations_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']],        # include platform_code for platforms so it reaches stops.txt
+        real_platforms_df[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station', 'platform_code']],
         mtr_entrances_df,
         lr_stops_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']]
     ], ignore_index=True)
@@ -3122,9 +3122,33 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         pathways_rows = []
 
         # 1) Load platform->exit journeys
+        def _norm_text(val):
+            if val is None:
+                return None
+            try:
+                return str(val).strip().upper()
+            except Exception:
+                return None
+
+        def _parse_exit_code(exrec: dict) -> str:
+            if not isinstance(exrec, dict):
+                return None
+            ref = exrec.get('ref')
+            if ref is not None and str(ref).strip() != '':
+                return str(ref).strip()
+            name_en = exrec.get('name_en') or ''
+            name_zh = exrec.get('name_zh') or ''
+            import re
+            m = re.search(r"Exit\s+([A-Z][0-9]*)", str(name_en), flags=re.IGNORECASE)
+            if m:
+                return m.group(1).upper()
+            m2 = re.match(r"([A-Z][0-9]*)", str(name_zh), flags=re.IGNORECASE)
+            if m2:
+                return m2.group(1).upper()
+            return None
         try:
             j_url = "https://github.com/wheelstransit/mtr-platform-exits-crawler/raw/refs/heads/main/data/output/journeys.json"
-            journeys = requests.get(j_url, timeout=20).json()
+            journeys = requests.get(j_url, timeout=100).json()
         except Exception:
             journeys = []
 
@@ -3136,7 +3160,8 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                     tail = rec.get('stop_id', '')
                     if 'MTR-ENTRANCE-' in tail:
                         station_name_en, exit_code = tail.split('MTR-ENTRANCE-')[1].rsplit('-', 1)
-                        db_entrance_map[(station_name_en, exit_code)] = rec.get('stop_id')
+                        key = (_norm_text(station_name_en), _norm_text(exit_code))
+                        db_entrance_map[key] = rec.get('stop_id')
                 except Exception:
                     continue
 
@@ -3159,9 +3184,9 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                     ex_key = next((k for k, v in external_exits.items() if v.get('amenity_id') == e_aid), None)
                     if ex_key:
                         exrec = external_exits.get(ex_key, {})
-                        exit_code = exrec.get('ref')
+                        exit_code = _parse_exit_code(exrec)
                         if exit_code:
-                            to_id = db_entrance_map.get((station_name_en, str(exit_code)))
+                            to_id = db_entrance_map.get((_norm_text(station_name_en), _norm_text(exit_code)))
                 except Exception:
                     to_id = None
 
