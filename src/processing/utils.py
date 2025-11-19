@@ -17,9 +17,9 @@ def smart_title_case(text):
         return text
     
     preserve_upper = {
-        'MTR', 'KMB', 'CTB', 'GMB', 'NLB', 'NWFB',
-        'IFC', 'ICC', 'HSBC', 'AIA', 'ATM', 'WC',
+        'MTR', 'KMB', 'CTB', 'GMB', 'NLB', 'LR',
         'I', 'II', 'III', 'IV', 'V',
+        "BBI", "EKCC", "H.K.", "GTC", 
     }
     
     keep_lower = {'of', 'the', 'and', 'at', 'in', 'on', 'to', 'for', 'with', 'by'}
