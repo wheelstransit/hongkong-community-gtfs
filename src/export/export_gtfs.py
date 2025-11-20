@@ -1273,7 +1273,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                     'stop_name': (f"Platform {platform_code}" if platform_code else plat_name),
                     'stop_lat': coords.get('lat'),
                     'stop_lon': coords.get('lon'),
-                    'location_type': 4,
+                    'location_type': 0,
                     'parent_station': f"MTR-{scode}",
                     'platform_code': platform_code
                 })
