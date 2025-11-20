@@ -8,6 +8,7 @@ set -e  # Exit on any error
 REPO_ROOT="$(pwd)"
 INPUT_GTFS="$REPO_ROOT/output/hk.gtfs.zip"
 OUTPUT_GTFS="$REPO_ROOT/hk.gtfs.zip"
+OUTPUT_GTFS_WITH_FARES="$REPO_ROOT/includefares-hk.gtfs.zip"
 
 OSM_FILE=""
 OSM_PARENT_DIR="$(realpath "$REPO_ROOT")"
@@ -75,8 +76,8 @@ fi
 rm -rf "$TEMP_DIR"
 mkdir -p "$TEMP_DIR"
 
-# Step 1: Extract translations.txt from original GTFS (if it exists)
-echo "Step 1: Extracting translations.txt from original GTFS..."
+# Step 1: Extract translations.txt and fare files from original GTFS (if they exist)
+echo "Step 1: Extracting translations.txt and fare files from original GTFS..."
 mkdir -p "$TEMP_DIR/original"
 unzip -q "$INPUT_GTFS" -d "$TEMP_DIR/original"
 if [ -f "$TEMP_DIR/original/translations.txt" ]; then
@@ -85,6 +86,18 @@ if [ -f "$TEMP_DIR/original/translations.txt" ]; then
 else
     echo "No translations.txt found in original GTFS"
     PRESERVE_TRANSLATIONS=false
+fi
+
+# Check for non-standard fare files
+PRESERVE_FARE_STAGES=false
+PRESERVE_SPECIAL_FARE_RULES=false
+if [ -f "$TEMP_DIR/original/fare_stages.csv" ]; then
+    echo "Found fare_stages.csv in original GTFS, will preserve it"
+    PRESERVE_FARE_STAGES=true
+fi
+if [ -f "$TEMP_DIR/original/special_fare_rules.csv" ]; then
+    echo "Found special_fare_rules.csv in original GTFS, will preserve it"
+    PRESERVE_SPECIAL_FARE_RULES=true
 fi
 
 # Step 2: Clean GTFS using gtfstidy
@@ -221,8 +234,8 @@ python3 rename_shapes.py
 # Clean up the script
 rm rename_shapes.py
 
-# Step 5: Add back translations.txt if it existed in original and create final zip
-echo "Step 5: Creating final GTFS zip file..."
+# Step 5: Add back translations.txt if it existed in original and create final zips
+echo "Step 5: Creating final GTFS zip files..."
 
 # Add back translations.txt if it was in the original GTFS
 if [ "$PRESERVE_TRANSLATIONS" = true ]; then
@@ -230,12 +243,34 @@ if [ "$PRESERVE_TRANSLATIONS" = true ]; then
     cp "$TEMP_DIR/original/translations.txt" .
 fi
 
+# Create standard GTFS zip (without fare CSV files)
+echo "Creating standard GTFS zip: $OUTPUT_GTFS"
 zip -r "$OUTPUT_GTFS" *.txt
+cd "$REPO_ROOT"
+
+# Create includefares GTFS zip with non-standard fare files
+echo "Creating includefares GTFS zip: $OUTPUT_GTFS_WITH_FARES"
+cd "$TEMP_DIR/output"
+
+if [ "$PRESERVE_FARE_STAGES" = true ]; then
+    echo "Adding fare_stages.csv..."
+    cp "$TEMP_DIR/original/fare_stages.csv" .
+fi
+
+if [ "$PRESERVE_SPECIAL_FARE_RULES" = true ]; then
+    echo "Adding special_fare_rules.csv..."
+    cp "$TEMP_DIR/original/special_fare_rules.csv" .
+fi
+
+# Create the includefares zip with both .txt and .csv files
+zip -r "$OUTPUT_GTFS_WITH_FARES" *.txt *.csv
 cd "$REPO_ROOT"
 
 # Clean up temporary directory
 echo "Cleaning up temporary files..."
 rm -rf "$TEMP_DIR"
 
-echo "Success! Clean GTFS with shapes generated at: $OUTPUT_GTFS"
+echo "Success! Clean GTFS files generated:"
+echo "  Standard GTFS: $OUTPUT_GTFS"
+echo "  With fares GTFS: $OUTPUT_GTFS_WITH_FARES"
 echo "Process completed successfully."

@@ -32,11 +32,18 @@ jobs:
       - name: Run full GTFS pipeline
         run: bash full_pipeline.sh
       
-      - name: Upload GTFS artifact
+      - name: Upload standard GTFS artifact
         uses: actions/upload-artifact@v4
         with:
           name: hk.gtfs.zip
           path: hk.gtfs.zip
+          retention-days: 90
+      
+      - name: Upload includefares GTFS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: includefares-hk.gtfs.zip
+          path: includefares-hk.gtfs.zip
           retention-days: 90
 
   deploy-pages:
@@ -51,10 +58,16 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Download built GTFS artifact
+      - name: Download standard GTFS artifact
         uses: actions/download-artifact@v4
         with:
           name: hk.gtfs.zip
+          path: dist
+      
+      - name: Download includefares GTFS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: includefares-hk.gtfs.zip
           path: dist
 
       - name: Create index.html
@@ -78,7 +91,10 @@ jobs:
               Repository: <a href="https://github.com/wheelstransit/hongkong-community-gtfs">github.com/wheelstransit/hongkong-community-gtfs</a>
             </p>
             <p>
-              Latest feed: <a href="./hk.gtfs.zip" download>hk.gtfs.zip</a>
+              Standard GTFS feed: <a href="./hk.gtfs.zip" download>hk.gtfs.zip</a>
+            </p>
+            <p>
+              GTFS feed with non-standard fares: <a href="./includefares-hk.gtfs.zip" download>includefares-hk.gtfs.zip</a>
             </p>
           </body>
           </html>

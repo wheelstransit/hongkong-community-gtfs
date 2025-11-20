@@ -14,5 +14,7 @@ docker compose down
 
 bash clean_gtfs.sh
 
-echo "Completed: $REPO_ROOT/hk.gtfs.zip"
+echo "Completed:"
+echo "  - $REPO_ROOT/hk.gtfs.zip"
+echo "  - $REPO_ROOT/includefares-hk.gtfs.zip"
 
