@@ -2223,7 +2223,23 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     mtr_routes_df['route_short_name'] = mtr_routes_df['line_code']
     mtr_routes_df['route_long_name'] = mtr_routes_df.apply(lambda r: f"{line_code_to_name.get(r['line_code'], r['line_code'])} ({r['terminal_pair']})", axis=1)
     mtr_routes_df['route_type'] = 1
-    mtr_routes_df = mtr_routes_df[['route_id','agency_id','route_short_name','route_long_name','route_type']]
+    
+    mtr_line_colors = {
+        'EAL': '5EB7E8',  # East Rail Line
+        'TCL': 'F7943E',  # Tung Chung Line
+        'TML': '923011',  # Tuen Ma Line
+        'AEL': '00888A',  # Airport Express
+        'DRL': 'F173AC',  # Disneyland Resort Line
+        'KTL': '00AB4E',  # Kwun Tong Line
+        'TWL': 'ED1D24',  # Tsuen Wan Line
+        'ISL': '007DC5',  # Island Line
+        'TKL': '7D499D',  # Tseung Kwan O Line
+        'SIL': 'BAC429',  # South Island Line
+    }
+    mtr_routes_df['route_color'] = mtr_routes_df['line_code'].map(mtr_line_colors)
+    mtr_routes_df['route_text_color'] = 'FFFFFF'  # White text for all lines
+    
+    mtr_routes_df = mtr_routes_df[['route_id','agency_id','route_short_name','route_long_name','route_type','route_color','route_text_color']]
 
     direction_variants = mtr_lines_and_stations_df[['Line Code','Direction']].drop_duplicates()
     mtr_trips_list = []
