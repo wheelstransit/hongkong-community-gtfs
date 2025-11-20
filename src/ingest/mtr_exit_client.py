@@ -18,6 +18,7 @@ def check_and_add_result(results, query_name, stop_info, exit_char, barrier_free
         if result.get('nameZH') == query_name:
             lat, lng = epsgTransformer.transform(result['y'], result['x'])
             final_res_list.append({
+                "station_code": stop_info["station_code"],
                 "station_name_en": stop_info["name_en"],
                 "station_name_zh": stop_info["name_tc"],
                 "exit": exit_char,
@@ -44,7 +45,7 @@ async def fetch_mtr_exits(silent=False):
             reader = csv.reader(stations_res.text.strip().split("\n"))
             next(reader, None)
             for entry in reader:
-                mtr_stops[entry[3]] = {"name_tc": entry[4], "name_en": entry[5]}
+                mtr_stops[entry[3]] = {"station_code": entry[3], "name_tc": entry[4], "name_en": entry[5]}
         except httpx.RequestError as e:
             if not silent:
                 print(f"Error fetching MTR station list: {e}")

@@ -1290,14 +1290,18 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     try:
         mtr_exits_gdf = gpd.read_postgis("SELECT * FROM mtr_exits", engine, geom_col='geometry')
         if not mtr_exits_gdf.empty:
-            mtr_exits_gdf['stop_id'] = 'MTR-ENTRANCE-' + mtr_exits_gdf['station_name_en'] + '-' + mtr_exits_gdf['exit']
+            if 'station_code' in mtr_exits_gdf.columns:
+                mtr_exits_gdf['stop_id'] = 'MTR-ENTRANCE-' + mtr_exits_gdf['station_code'] + '-' + mtr_exits_gdf['exit']
+                station_code_to_id_map = mtr_stations_df.set_index('station_code')['stop_id'].to_dict()
+                mtr_exits_gdf['parent_station'] = mtr_exits_gdf['station_code'].map(station_code_to_id_map)
+            else:
+                mtr_exits_gdf['stop_id'] = 'MTR-ENTRANCE-' + mtr_exits_gdf['station_name_en'] + '-' + mtr_exits_gdf['exit']
+                station_name_to_id_map = mtr_stations_df.set_index('stop_name')['stop_id'].to_dict()
+                mtr_exits_gdf['parent_station'] = mtr_exits_gdf['station_name_en'].map(station_name_to_id_map)
             mtr_exits_gdf['stop_name'] = mtr_exits_gdf['exit']
             mtr_exits_gdf['stop_lat'] = mtr_exits_gdf.geometry.y
             mtr_exits_gdf['stop_lon'] = mtr_exits_gdf.geometry.x
             mtr_exits_gdf['location_type'] = 2
-
-            station_name_to_id_map = mtr_stations_df.set_index('stop_name')['stop_id'].to_dict()
-            mtr_exits_gdf['parent_station'] = mtr_exits_gdf['station_name_en'].map(station_name_to_id_map)
 
             mtr_entrances_df = mtr_exits_gdf[['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'location_type', 'parent_station']]
         else:
@@ -3159,8 +3163,9 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                 try:
                     tail = rec.get('stop_id', '')
                     if 'MTR-ENTRANCE-' in tail:
-                        station_name_en, exit_code = tail.split('MTR-ENTRANCE-')[1].rsplit('-', 1)
-                        key = (_norm_text(station_name_en), _norm_text(exit_code))
+                        # Parse either new format (MTR-ENTRANCE-{station_code}-{exit}) or old format (MTR-ENTRANCE-{station_name}-{exit})
+                        station_identifier, exit_code = tail.split('MTR-ENTRANCE-')[1].rsplit('-', 1)
+                        key = (_norm_text(station_identifier), _norm_text(exit_code))
                         db_entrance_map[key] = rec.get('stop_id')
                 except Exception:
                     continue
@@ -3178,7 +3183,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
             to_id = None
             scode = rec.get('station_code')
             station_name_en = scode_to_name.get(scode)
-            if station_name_en:
+            if scode:
                 # find exit ref by amenity id
                 try:
                     ex_key = next((k for k, v in external_exits.items() if v.get('amenity_id') == e_aid), None)
@@ -3186,7 +3191,10 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                         exrec = external_exits.get(ex_key, {})
                         exit_code = _parse_exit_code(exrec)
                         if exit_code:
-                            to_id = db_entrance_map.get((_norm_text(station_name_en), _norm_text(exit_code)))
+                            # Try station_code first (new format), fall back to station_name_en (old format)
+                            to_id = db_entrance_map.get((_norm_text(scode), _norm_text(exit_code)))
+                            if not to_id and station_name_en:
+                                to_id = db_entrance_map.get((_norm_text(station_name_en), _norm_text(exit_code)))
                 except Exception:
                     to_id = None
 
