@@ -45,7 +45,9 @@ async def fetch_mtr_exits(silent=False):
             reader = csv.reader(stations_res.text.strip().split("\n"))
             next(reader, None)
             for entry in reader:
-                mtr_stops[entry[3]] = {"station_code": entry[3], "name_tc": entry[4], "name_en": entry[5]}
+                # entry[2] = Station Code (AWE, AIR, etc), entry[3] = Station ID (numeric)
+                station_code = entry[2]
+                mtr_stops[entry[3]] = {"station_code": station_code, "name_tc": entry[4], "name_en": entry[5]}
         except httpx.RequestError as e:
             if not silent:
                 print(f"Error fetching MTR station list: {e}")

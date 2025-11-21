@@ -29,7 +29,7 @@ from src.ingest.waypoints_client import fetch_csdi_waypoints_data
 
 cache_dir = ".cache"
 
-def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, force_ingest_gov_gtfs=False, force_ingest_gmb=False, *args, **kwargs):
+def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, force_ingest_gov_gtfs=False, force_ingest_gmb=False, force_ingest_mtr=False, *args, **kwargs):
     if force_ingest_osm and 'osm' in cache_key:
         force_ingest = True
     
@@ -37,6 +37,9 @@ def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_in
         force_ingest = True
 
     if force_ingest_gmb and ('gmb_' in cache_key or 'gmb-' in cache_key or cache_key.startswith('gmb')):
+        force_ingest = True
+
+    if force_ingest_mtr and ('mtr_' in cache_key or cache_key.startswith('mtr') or 'light_rail' in cache_key):
         force_ingest = True
 
     cache_file = os.path.join(cache_dir, f"{cache_key}.pkl")
@@ -63,7 +66,8 @@ def main():
     parser.add_argument('--force-ingest-osm', action='store_true', help='force re-ingestion of osm data, ignoring cache')
     parser.add_argument('--force-ingest-waypoints', action='store_true', help='force re-ingestion of waypoints data, ignoring cache')
     parser.add_argument('--force-ingest-gov-gtfs', action='store_true', help='force re-ingestion of government GTFS data, ignoring cache')
-    parser.add_argument('--force-ingest-gmb', action='store_true', help='force re-ingestion of gmb data, ignoring cache')  # NEW
+    parser.add_argument('--force-ingest-gmb', action='store_true', help='force re-ingestion of gmb data, ignoring cache')
+    parser.add_argument('--force-ingest-mtr', action='store_true', help='force re-ingestion of mtr data (rails, exits, headway), ignoring cache')
     parser.add_argument('--no-regenerate-shapes', action='store_true', help='do not regenerate shapes if they already exist')
     args = parser.parse_args()
 
@@ -122,15 +126,15 @@ def main():
         print(f"mtr bus data - routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}")
 
     # mtr rails
-    raw_mtr_lines_and_stations = fetch_or_load_from_cache("mtr_lines_and_stations", mtr_rails_client.fetch_mtr_lines_and_stations_with_locations, args.force_ingest, silent=args.silent)
-    raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest, silent=args.silent)
-    raw_mtr_lines_fares = fetch_or_load_from_cache("mtr_lines_fares", mtr_rails_client.fetch_mtr_lines_fares, args.force_ingest, silent=args.silent)
-    raw_light_rail_fares = fetch_or_load_from_cache("light_rail_fares", mtr_rails_client.fetch_light_rail_fares, args.force_ingest, silent=args.silent)
-    raw_mtr_headway = fetch_or_load_from_cache("mtr_headway", mtr_headway.scrape_train_frequency, args.force_ingest, silent=args.silent)
-    raw_mtr_exits = fetch_or_load_from_cache("mtr_exits", mtr_exit_client.fetch_mtr_exits, args.force_ingest, silent=args.silent)
+    raw_mtr_lines_and_stations = fetch_or_load_from_cache("mtr_lines_and_stations", mtr_rails_client.fetch_mtr_lines_and_stations_with_locations, args.force_ingest, force_ingest_mtr=args.force_ingest_mtr, silent=args.silent)
+    raw_light_rail_routes_and_stops = fetch_or_load_from_cache("light_rail_routes_and_stops", mtr_rails_client.fetch_light_rail_routes_and_stops, args.force_ingest, force_ingest_mtr=args.force_ingest_mtr, silent=args.silent)
+    raw_mtr_lines_fares = fetch_or_load_from_cache("mtr_lines_fares", mtr_rails_client.fetch_mtr_lines_fares, args.force_ingest, force_ingest_mtr=args.force_ingest_mtr, silent=args.silent)
+    raw_light_rail_fares = fetch_or_load_from_cache("light_rail_fares", mtr_rails_client.fetch_light_rail_fares, args.force_ingest, force_ingest_mtr=args.force_ingest_mtr, silent=args.silent)
+    raw_mtr_headway = fetch_or_load_from_cache("mtr_headway", mtr_headway.scrape_train_frequency, args.force_ingest, force_ingest_mtr=args.force_ingest_mtr, silent=args.silent)
+    raw_mtr_exits = fetch_or_load_from_cache("mtr_exits", mtr_exit_client.fetch_mtr_exits, args.force_ingest, force_ingest_mtr=args.force_ingest_mtr, silent=args.silent)
 
     # light rail stops
-    raw_light_rail_stops = fetch_or_load_from_cache("light_rail_stops", light_rail_stops_fetcher.fetch_light_rail_stops, args.force_ingest, silent=args.silent)
+    raw_light_rail_stops = fetch_or_load_from_cache("light_rail_stops", light_rail_stops_fetcher.fetch_light_rail_stops, args.force_ingest, force_ingest_mtr=args.force_ingest_mtr, silent=args.silent)
 
     # osm
     raw_osm_data = fetch_or_load_from_cache("osm_routes", osm_parser.fetch_osm_routes, args.force_ingest, force_ingest_osm=args.force_ingest_osm, silent=args.silent)
