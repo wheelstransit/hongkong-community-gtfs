@@ -9,6 +9,7 @@ REPO_ROOT="$(pwd)"
 INPUT_GTFS="$REPO_ROOT/output/hk.gtfs.zip"
 OUTPUT_GTFS="$REPO_ROOT/hk.gtfs.zip"
 OUTPUT_GTFS_WITH_FARES="$REPO_ROOT/includefares-hk.gtfs.zip"
+OUTPUT_GTFS_DROP_SHAPES="$REPO_ROOT/hk-drop-shapes.gtfs.zip"
 
 OSM_FILE=""
 OSM_PARENT_DIR="$(realpath "$REPO_ROOT")"
@@ -16,6 +17,8 @@ OSM_PBF_PATH="$OSM_PARENT_DIR/hong-kong-latest.osm.pbf"
 OSM_PBF_ALT1="$OSM_PARENT_DIR/hk.osm.pbf"
 OSM_BZ2_ALT="$OSM_PARENT_DIR/hk.osm.bz2"
 TEMP_DIR="/tmp/gtfs_processing"
+PFAEDLE_OUTPUT_STANDARD="$TEMP_DIR/output_standard"
+PFAEDLE_OUTPUT_DROP_SHAPES="$TEMP_DIR/output_drop_shapes"
 
 echo "Starting GTFS cleaning and shape generation process..."
 
@@ -43,6 +46,89 @@ ensure_osmium() {
         echo "Error: Failed to install 'osmium-tool'."
         exit 1
     fi
+}
+
+run_pfaedle_variant() {
+    # $1 = output directory, $2 = additional pfaedle flags (optional)
+    local output_dir="$1"
+    local extra_flags="$2"
+
+    mkdir -p "$output_dir"
+
+    echo "Running pfaedle with flags: '${extra_flags}' (output: $output_dir)"
+    docker run -i --rm \
+        --user "$(id -u):$(id -g)" \
+        --volume "$TEMP_DIR/osm:/osm" \
+        --volume "$TEMP_DIR/gtfs:/gtfs" \
+        --volume "$output_dir:/gtfs-out" \
+        ghcr.io/ad-freiburg/pfaedle:latest \
+        ${extra_flags} -x "/osm/$OSM_DOCKER_FILE" -i /gtfs/input.gtfs.zip
+}
+
+rename_shapes_in_dir() {
+    # $1 = directory containing trips.txt/shapes.txt
+    local target_dir="$1"
+
+    if [ ! -f "$target_dir/trips.txt" ] || [ ! -f "$target_dir/shapes.txt" ]; then
+        echo "No trips.txt or shapes.txt in $target_dir, skipping shape ID renaming"
+        return 0
+    fi
+
+    (cd "$target_dir" && python3 - << 'EOF'
+import csv
+import re
+from collections import OrderedDict
+from pathlib import Path
+
+trips_path = Path('trips.txt')
+shapes_path = Path('shapes.txt')
+
+shape_to_first_trip = OrderedDict()
+
+print("Reading trips.txt to build shape ID mapping...")
+with trips_path.open('r', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        shape_id = row.get('shape_id', '').strip()
+        trip_id = row.get('trip_id', '').strip()
+        if shape_id and re.match(r'^shp_\d+_\d+$', shape_id):
+            shape_to_first_trip.setdefault(shape_id, trip_id)
+
+print(f"Found {len(shape_to_first_trip)} pfaedle shapes to rename")
+if not shape_to_first_trip:
+    raise SystemExit(0)
+
+trips_data = []
+with trips_path.open('r', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    fieldnames = reader.fieldnames
+    for row in reader:
+        if row['shape_id'] in shape_to_first_trip:
+            row['shape_id'] = shape_to_first_trip[row['shape_id']]
+        trips_data.append(row)
+
+with trips_path.open('w', encoding='utf-8', newline='') as f:
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(trips_data)
+
+shapes_data = []
+with shapes_path.open('r', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    fieldnames = reader.fieldnames
+    for row in reader:
+        if row['shape_id'] in shape_to_first_trip:
+            row['shape_id'] = shape_to_first_trip[row['shape_id']]
+        shapes_data.append(row)
+
+with shapes_path.open('w', encoding='utf-8', newline='') as f:
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(shapes_data)
+
+print("Shape ID renaming completed successfully")
+EOF
+    )
 }
 
 # Check if input GTFS exists
@@ -111,7 +197,7 @@ fi
 
 echo "GTFS cleaning completed"
 
-# Step 3: Generate shapes using pfaedle
+# Step 3: Generate shapes using pfaedle (standard and drop-shapes variants)
 echo "Step 3: Generating shapes with pfaedle..."
 
 # Pull the latest pfaedle Docker image
@@ -121,7 +207,6 @@ docker pull ghcr.io/ad-freiburg/pfaedle:latest
 # Create directories for Docker volumes
 mkdir -p "$TEMP_DIR/osm"
 mkdir -p "$TEMP_DIR/gtfs"
-mkdir -p "$TEMP_DIR/output"
 
 # Copy files to temporary locations for Docker
 echo "Preparing files for pfaedle..."
@@ -141,129 +226,70 @@ else
 fi
 cp "$TEMP_DIR/cleaned.gtfs.zip" "$TEMP_DIR/gtfs/input.gtfs.zip"
 
-# Run pfaedle with Docker
-echo "Running pfaedle to generate shapes..."
-docker run -i --rm \
-    --user "$(id -u):$(id -g)" \
-    --volume "$TEMP_DIR/osm:/osm" \
-    --volume "$TEMP_DIR/gtfs:/gtfs" \
-    --volume "$TEMP_DIR/output:/gtfs-out" \
-    ghcr.io/ad-freiburg/pfaedle:latest \
-    -x "/osm/$OSM_DOCKER_FILE" -i /gtfs/input.gtfs.zip
+echo "Running pfaedle (standard)..."
+run_pfaedle_variant "$PFAEDLE_OUTPUT_STANDARD" ""
+
+echo "Running pfaedle (-D drop shapes)..."
+run_pfaedle_variant "$PFAEDLE_OUTPUT_DROP_SHAPES" "-D"
 
 # Check if pfaedle output exists (pfaedle outputs individual files, not a zip)
-if [ ! -f "$TEMP_DIR/output/agency.txt" ]; then
-    echo "Error: pfaedle did not produce expected output"
-    exit 1
-fi
+for output_dir in "$PFAEDLE_OUTPUT_STANDARD" "$PFAEDLE_OUTPUT_DROP_SHAPES"; do
+    if [ ! -f "$output_dir/agency.txt" ]; then
+        echo "Error: pfaedle did not produce expected output in $output_dir"
+        exit 1
+    fi
+done
 
 # Step 4: Rename pfaedle shape IDs to use first trip ID
 echo "Step 4: Renaming pfaedle shape IDs to use first trip ID..."
-cd "$TEMP_DIR/output"
-
-# Create a Python script to rename shape IDs
-cat > rename_shapes.py << 'EOF'
-import csv
-import re
-from collections import defaultdict, OrderedDict
-
-def rename_shape_ids():
-    # Read trips.txt to build shape_id -> first_trip_id mapping
-    shape_to_first_trip = OrderedDict()
-    
-    print("Reading trips.txt to build shape ID mapping...")
-    with open('trips.txt', 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            shape_id = row.get('shape_id', '').strip()
-            trip_id = row.get('trip_id', '').strip()
-            
-            # Only process pfaedle-generated shape IDs (pattern: shp_x_x)
-            if shape_id and re.match(r'^shp_\d+_\d+$', shape_id):
-                if shape_id not in shape_to_first_trip:
-                    shape_to_first_trip[shape_id] = trip_id
-                    print(f"Mapping shape {shape_id} -> {trip_id}")
-    
-    print(f"Found {len(shape_to_first_trip)} pfaedle shapes to rename")
-    
-    if not shape_to_first_trip:
-        print("No pfaedle-generated shape IDs found, skipping rename")
-        return
-    
-    # Update trips.txt with new shape IDs
-    print("Updating trips.txt with new shape IDs...")
-    trips_data = []
-    with open('trips.txt', 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames
-        for row in reader:
-            if row['shape_id'] in shape_to_first_trip:
-                row['shape_id'] = shape_to_first_trip[row['shape_id']]
-            trips_data.append(row)
-    
-    with open('trips.txt', 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(trips_data)
-    
-    # Update shapes.txt with new shape IDs
-    print("Updating shapes.txt with new shape IDs...")
-    shapes_data = []
-    with open('shapes.txt', 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames
-        for row in reader:
-            if row['shape_id'] in shape_to_first_trip:
-                row['shape_id'] = shape_to_first_trip[row['shape_id']]
-            shapes_data.append(row)
-    
-    with open('shapes.txt', 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(shapes_data)
-    
-    print("Shape ID renaming completed successfully")
-
-if __name__ == "__main__":
-    rename_shape_ids()
-EOF
-
-# Run the shape ID renaming script
-python3 rename_shapes.py
-
-# Clean up the script
-rm rename_shapes.py
+rename_shapes_in_dir "$PFAEDLE_OUTPUT_STANDARD"
+rename_shapes_in_dir "$PFAEDLE_OUTPUT_DROP_SHAPES"
 
 # Step 5: Add back translations.txt if it existed in original and create final zips
 echo "Step 5: Creating final GTFS zip files..."
 
-# Add back translations.txt if it was in the original GTFS
-if [ "$PRESERVE_TRANSLATIONS" = true ]; then
-    echo "Adding back translations.txt from original GTFS..."
-    cp "$TEMP_DIR/original/translations.txt" .
-fi
+package_standard_zip() {
+    local source_dir="$1"
+    local zip_target="$2"
+    local include_fares="$3"
 
-# Create standard GTFS zip (without fare CSV files)
+    if [ "$PRESERVE_TRANSLATIONS" = true ]; then
+        echo "Adding back translations.txt from original GTFS to $source_dir..."
+        cp "$TEMP_DIR/original/translations.txt" "$source_dir"
+    fi
+
+    (cd "$source_dir" && zip -r "$zip_target" *.txt)
+
+    if [ "$include_fares" = true ]; then
+        if compgen -G "$source_dir/"'*.csv' >/dev/null; then
+            (cd "$source_dir" && zip -r "$zip_target" *.csv)
+        else
+            echo "No fare CSV files to include for $zip_target"
+        fi
+    fi
+}
+
 echo "Creating standard GTFS zip: $OUTPUT_GTFS"
-zip -r "$OUTPUT_GTFS" *.txt
-cd "$REPO_ROOT"
+package_standard_zip "$PFAEDLE_OUTPUT_STANDARD" "$OUTPUT_GTFS" false
 
-# Create includefares GTFS zip with non-standard fare files
+echo "Creating drop-shapes GTFS zip: $OUTPUT_GTFS_DROP_SHAPES"
+package_standard_zip "$PFAEDLE_OUTPUT_DROP_SHAPES" "$OUTPUT_GTFS_DROP_SHAPES" false
+
 echo "Creating includefares GTFS zip: $OUTPUT_GTFS_WITH_FARES"
-cd "$TEMP_DIR/output"
-
+INCLUDE_FARES=false
 if [ "$PRESERVE_FARE_STAGES" = true ]; then
     echo "Adding fare_stages.csv..."
-    cp "$TEMP_DIR/original/fare_stages.csv" .
+    cp "$TEMP_DIR/original/fare_stages.csv" "$PFAEDLE_OUTPUT_STANDARD"
+    INCLUDE_FARES=true
 fi
 
 if [ "$PRESERVE_SPECIAL_FARE_RULES" = true ]; then
     echo "Adding special_fare_rules.csv..."
-    cp "$TEMP_DIR/original/special_fare_rules.csv" .
+    cp "$TEMP_DIR/original/special_fare_rules.csv" "$PFAEDLE_OUTPUT_STANDARD"
+    INCLUDE_FARES=true
 fi
+package_standard_zip "$PFAEDLE_OUTPUT_STANDARD" "$OUTPUT_GTFS_WITH_FARES" "$INCLUDE_FARES"
 
-# Create the includefares zip with both .txt and .csv files
-zip -r "$OUTPUT_GTFS_WITH_FARES" *.txt *.csv
 cd "$REPO_ROOT"
 
 # Clean up temporary directory
@@ -273,4 +299,5 @@ rm -rf "$TEMP_DIR"
 echo "Success! Clean GTFS files generated:"
 echo "  Standard GTFS: $OUTPUT_GTFS"
 echo "  With fares GTFS: $OUTPUT_GTFS_WITH_FARES"
+echo "  Drop-shapes GTFS: $OUTPUT_GTFS_DROP_SHAPES"
 echo "Process completed successfully."

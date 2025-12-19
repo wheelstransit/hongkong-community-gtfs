@@ -17,4 +17,5 @@ bash clean_gtfs.sh
 echo "Completed:"
 echo "  - $REPO_ROOT/hk.gtfs.zip"
 echo "  - $REPO_ROOT/includefares-hk.gtfs.zip"
+echo "  - $REPO_ROOT/hk-drop-shapes.gtfs.zip"
 
