@@ -9,6 +9,7 @@ import logging
 import httpx
 import os
 from datetime import datetime, timedelta
+from math import radians, cos, sin, asin, sqrt
 
 # List of Circular Routes
 circularRoutes = ("705", "706")
@@ -34,6 +35,22 @@ def routeKey(route, bound):
   if route in circularRoutes:
     return f"{route}_O"
   return f"{route}_{bound}"
+
+def haversine(lon1, lat1, lon2, lat2):
+    """
+    Calculate the great circle distance in kilometers between two points 
+    on the earth (specified in decimal degrees)
+    """
+    # convert decimal degrees to radians 
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+
+    # haversine formula 
+    dlon = lon2 - lon1 
+    dlat = lat2 - lat1 
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a)) 
+    r = 6371 # Radius of earth in kilometers
+    return c * r
 
 async def get_route_and_stop_data():
     """Fetches route and stop data from MTR and GeoData HK."""
@@ -198,9 +215,39 @@ def generate_gtfs(route_list, stop_list, schedule_data):
                 # If any error occurs during parsing, use the fallback and log it.
                 logging.warning(f"Could not calculate trip duration for {key} due to '{e}'. Using fallback time.")
 
-            # Write stop_times using the determined time_per_stop (either calculated or fallback)
+            # Write stop_times
+            # Use schedule-based time_per_stop if available, otherwise calculate from distance
+            use_distance_formula = (time_per_stop == FALLBACK_SECONDS_PER_STOP)
+            
+            cumulative_seconds = 0
             for i, stop_id in enumerate(route_info['stops']):
-                elapsed_seconds = int(time_per_stop * i)
+                if i > 0:
+                    if use_distance_formula:
+                        # Use distance-based calculation when schedule data unavailable
+                        # Formula: travel_time_seconds = (distance_km * 1.5 / 25) * 3600
+                        # where 1.5 is route factor, 25 is speed in km/h
+                        prev_stop_id = route_info['stops'][i - 1]
+                        if prev_stop_id in stop_list and stop_id in stop_list:
+                            prev_stop = stop_list[prev_stop_id]
+                            curr_stop = stop_list[stop_id]
+                            
+                            # Calculate distance between stops
+                            distance_km = haversine(
+                                prev_stop['long'], prev_stop['lat'],
+                                curr_stop['long'], curr_stop['lat']
+                            )
+                            
+                            # Calculate travel time: (distance * 1.5 / 25) * 3600 seconds
+                            segment_time = (distance_km * 1.5 / 25) * 3600
+                            cumulative_seconds += segment_time
+                        else:
+                            # Fallback if coordinates not available
+                            cumulative_seconds += time_per_stop
+                    else:
+                        # Use schedule-based average time per stop
+                        cumulative_seconds += time_per_stop
+                
+                elapsed_seconds = int(cumulative_seconds)
                 # Format time as H:MM:SS from the start of the trip
                 travel_time = str(timedelta(seconds=elapsed_seconds))
                 if len(travel_time.split(":")[0]) == 1: # pad hour if needed
