@@ -3333,7 +3333,7 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     default_calendar_values = {
         'monday': 1, 'tuesday': 1, 'wednesday': 1, 'thursday': 1,
         'friday': 1, 'saturday': 1, 'sunday': 1,
-        'start_date': '20230101', 'end_date': '20251231'
+        'start_date': '20230101', 'end_date': '20991231'
     }
     # Fill NaN values for the default services
     for col, val in default_calendar_values.items():
