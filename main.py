@@ -29,7 +29,7 @@ from src.ingest.waypoints_client import fetch_csdi_waypoints_data
 
 cache_dir = ".cache"
 
-def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, force_ingest_gov_gtfs=False, force_ingest_gmb=False, force_ingest_mtr=False, *args, **kwargs):
+def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_ingest_osm=False, force_ingest_gov_gtfs=False, force_ingest_gmb=False, force_ingest_mtr=False, force_ingest_mtrb=False, *args, **kwargs):
     if force_ingest_osm and 'osm' in cache_key:
         force_ingest = True
     
@@ -40,6 +40,9 @@ def fetch_or_load_from_cache(cache_key, fetch_func, force_ingest=False, force_in
         force_ingest = True
 
     if force_ingest_mtr and ('mtr_' in cache_key or cache_key.startswith('mtr') or 'light_rail' in cache_key):
+        force_ingest = True
+
+    if force_ingest_mtrb and ('mtrbus' in cache_key):
         force_ingest = True
 
     cache_file = os.path.join(cache_dir, f"{cache_key}.pkl")
@@ -68,6 +71,7 @@ def main():
     parser.add_argument('--force-ingest-gov-gtfs', action='store_true', help='force re-ingestion of government GTFS data, ignoring cache')
     parser.add_argument('--force-ingest-gmb', action='store_true', help='force re-ingestion of gmb data, ignoring cache')
     parser.add_argument('--force-ingest-mtr', action='store_true', help='force re-ingestion of mtr data (rails, exits, headway), ignoring cache')
+    parser.add_argument('--force-ingest-mtrb', action='store_true', help='force re-ingestion of mtr bus data, ignoring cache')
     parser.add_argument('--no-regenerate-shapes', action='store_true', help='do not regenerate shapes if they already exist')
     args = parser.parse_args()
 
@@ -119,9 +123,9 @@ def main():
         print(f"gmb data - routes: {len(raw_gmb_routes) if raw_gmb_routes else 0}, stops: {len(raw_gmb_stops) if raw_gmb_stops else 0}, route-stops: {len(raw_gmb_route_stops) if raw_gmb_route_stops else 0}")
 
     # mtr bus
-    raw_mtrbus_routes = fetch_or_load_from_cache("mtrbus_routes", mtrbus_client.fetch_all_routes, args.force_ingest, silent=args.silent)
-    raw_mtrbus_stops = fetch_or_load_from_cache("mtrbus_stops", mtrbus_client.fetch_all_stops, args.force_ingest, silent=args.silent)
-    raw_mtrbus_route_stops = fetch_or_load_from_cache("mtrbus_route_stops", mtrbus_client.fetch_all_route_stops, args.force_ingest, silent=args.silent)
+    raw_mtrbus_routes = fetch_or_load_from_cache("mtrbus_routes", mtrbus_client.fetch_all_routes, args.force_ingest, force_ingest_mtrb=args.force_ingest_mtrb, silent=args.silent)
+    raw_mtrbus_stops = fetch_or_load_from_cache("mtrbus_stops", mtrbus_client.fetch_all_stops, args.force_ingest, force_ingest_mtrb=args.force_ingest_mtrb, silent=args.silent)
+    raw_mtrbus_route_stops = fetch_or_load_from_cache("mtrbus_route_stops", mtrbus_client.fetch_all_route_stops, args.force_ingest, force_ingest_mtrb=args.force_ingest_mtrb, silent=args.silent)
     if not args.silent:
         print(f"mtr bus data - routes: {len(raw_mtrbus_routes) if raw_mtrbus_routes else 0}, stops: {len(raw_mtrbus_stops) if raw_mtrbus_stops else 0}, route-stops: {len(raw_mtrbus_route_stops) if raw_mtrbus_route_stops else 0}")
 

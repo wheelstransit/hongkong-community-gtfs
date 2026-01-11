@@ -560,6 +560,8 @@ def generate_trip_headsigns(engine: Engine, trips_df: pd.DataFrame, silent: bool
             mtr_subset = work_df.loc[mtrb_mask]
             mtr_routes_df = pd.read_sql("SELECT route_id, route_name_eng FROM mtrbus_routes", engine)
             mtr_routes_df['route_short_name'] = mtr_routes_df['route_id'].astype(str)
+            # Deduplicate by route_id, keeping first occurrence (main route)
+            mtr_routes_df = mtr_routes_df.drop_duplicates('route_short_name', keep='first')
             split_df = mtr_routes_df['route_name_eng'].str.split(' to ', n=1, expand=True)
             mtr_routes_df['origin_guess'] = split_df[0]
             mtr_routes_df['dest_guess'] = split_df[1].fillna(split_df[0])
@@ -810,6 +812,8 @@ def generate_trip_headsigns_tc(engine: Engine, trips_df: pd.DataFrame, english_h
             mtr_subset = work_df.loc[mtrb_mask]
             mtr_routes_df = pd.read_sql("SELECT route_id, route_name_chi FROM mtrbus_routes", engine)
             mtr_routes_df['route_short_name'] = mtr_routes_df['route_id'].astype(str)
+            # Deduplicate by route_id, keeping first occurrence (main route)
+            mtr_routes_df = mtr_routes_df.drop_duplicates('route_short_name', keep='first')
 
             def split_cn(text):
                 if not isinstance(text, str):
