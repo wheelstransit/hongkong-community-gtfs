@@ -13,19 +13,28 @@ LIGHT_RAIL_ROUTES_AND_STOPS_URL = "https://opendata.mtr.com.hk/data/light_rail_r
 LIGHT_RAIL_FARES_URL = "https://opendata.mtr.com.hk/data/light_rail_fares.csv"
 GEODATA_API_URL = "https://geodata.gov.hk/gs/api/v1.0.0/locationSearch?q="
 
-async def fetch_station_location(client, station_name_tc, epsg_transformer):
-    try:
-        query = f"港鐵{station_name_tc}站"
-        url = f"{GEODATA_API_URL}{query}"
-        response = await client.get(url, headers={'Accept': 'application/json'})
-        response.raise_for_status()
-        data = response.json()
-        if data:
-            y, x = data[0]['y'], data[0]['x']
-            lat, lon = epsg_transformer.transform(y, x)
-            return lat, lon
-    except (httpx.RequestError, IndexError, KeyError, ValueError):
-        pass
+async def fetch_station_location(client, station_name_tc, epsg_transformer, silent=False):
+    max_retries = 3
+    backoff = 1
+    for attempt in range(max_retries):
+        try:
+            query = f"港鐵{station_name_tc}站"
+            url = f"{GEODATA_API_URL}{query}"
+            response = await client.get(url, headers={'Accept': 'application/json'})
+            response.raise_for_status()
+            data = response.json()
+            if data:
+                y, x = data[0]['y'], data[0]['x']
+                lat, lon = epsg_transformer.transform(y, x)
+                return lat, lon
+            return None, None
+        except (httpx.RequestError, httpx.HTTPStatusError, IndexError, KeyError, ValueError) as exc:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(backoff)
+                backoff *= 2
+                continue
+            if not silent:
+                print(f"failed to fetch location for {station_name_tc} after {max_retries} attempts: {exc}")
     return None, None
 
 async def fetch_mtr_lines_and_stations_with_locations(silent=False) -> List[Dict]:
@@ -56,7 +65,7 @@ async def fetch_mtr_lines_and_stations_with_locations(silent=False) -> List[Dict
         unique_stations_to_fetch = {row['Station ID']: row for row in stations}
 
         for station_id, station_data in unique_stations_to_fetch.items():
-            lat, lon = await fetch_station_location(client, station_data['Chinese Name'], epsg_transformer)
+            lat, lon = await fetch_station_location(client, station_data['Chinese Name'], epsg_transformer, silent=silent)
             if lat and lon:
                 station_locations[station_id] = {'latitude': lat, 'longitude': lon}
 
