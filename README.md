@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-~~Try the feed in action with [Wheels Router](https://planner.justusewheels.com/)~~ Server down ATM
+Try the feed in action with [Wheels Router Nano](https://router-nano.justusewheels.com/)
 
 An open-source, community-driven project to generate accurate and up-to-date procedural GTFS and GTFS-RT feeds for Hong Kong's public transport network.
 
