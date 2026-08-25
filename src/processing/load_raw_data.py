@@ -729,6 +729,23 @@ def process_and_load_mtr_rails_data(
         # Drop rows where location data could not be fetched
         stations_df.dropna(subset=['longitude', 'latitude'], inplace=True)
 
+        # TKL through trains (North Point <-> LOHAS Park) are missing from MTR's data
+        tkl_df = stations_df[stations_df['Line Code'] == 'TKL']
+        if not tkl_df.empty and not (tkl_df['Direction'] == 'LHP-DT').any():
+            station_rows = {r['Station Code']: r for _, r in tkl_df.iterrows()}
+            lhp_dt = ['LHP', 'TKO', 'TIK', 'YAT', 'QUB', 'NOP']
+            synthetic = []
+            for direction, codes in (('LHP-DT', lhp_dt), ('LHP-UT', lhp_dt[::-1])):
+                for i, code in enumerate(codes, start=1):
+                    if code not in station_rows:
+                        break
+                    row = station_rows[code].copy()
+                    row['Direction'] = direction
+                    row['Sequence'] = f"{i}.00"
+                    synthetic.append(row)
+            if synthetic:
+                stations_df = pd.concat([stations_df, pd.DataFrame(synthetic)], ignore_index=True)
+
         # Create a GeoDataFrame to add the geometry column
         stations_gdf = gpd.GeoDataFrame(
             stations_df,

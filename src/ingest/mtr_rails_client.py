@@ -6,12 +6,32 @@ from pyproj import Transformer
 from typing import List, Dict
 
 # constants
-# constants
 MTR_LINES_AND_STATIONS_URL = "https://opendata.mtr.com.hk/data/mtr_lines_and_stations.csv"
 MTR_LINES_FARES_URL = "https://opendata.mtr.com.hk/data/mtr_lines_fares.csv"
 LIGHT_RAIL_ROUTES_AND_STOPS_URL = "https://opendata.mtr.com.hk/data/light_rail_routes_and_stops.csv"
 LIGHT_RAIL_FARES_URL = "https://opendata.mtr.com.hk/data/light_rail_fares.csv"
-GEODATA_API_URL = "https://geodata.gov.hk/gs/api/v1.0.0/locationSearch?q="
+GEODATA_API_URL = "https://www.map.gov.hk/gs/api/v1.0.0/locationSearch?q="
+MTR_STATION_DATA_URL = "https://raw.githubusercontent.com/wheelstransit/mtr-platform-exits-crawler/refs/heads/main/data/output/mtr_data_complete.json"
+
+def fetch_crawler_station_locations(silent=False) -> Dict[str, Dict[str, float]]:
+    """Fetch station_code -> {latitude, longitude} from the mtr-platform-exits-crawler dataset."""
+    try:
+        response = httpx.get(MTR_STATION_DATA_URL, timeout=30)
+        response.raise_for_status()
+        stations = response.json().get('stations') or {}
+        locations = {}
+        for code, rec in stations.items():
+            loc = rec.get('location') or {}
+            lat, lon = loc.get('lat'), loc.get('lon')
+            if lat is not None and lon is not None:
+                locations[code] = {'latitude': float(lat), 'longitude': float(lon)}
+        if not silent:
+            print(f"fetched {len(locations)} station locations from mtr-platform-exits-crawler")
+        return locations
+    except Exception as e:
+        if not silent:
+            print(f"warning: could not fetch crawler station locations: {e}")
+        return {}
 
 async def fetch_station_location(client, station_name_tc, epsg_transformer, silent=False):
     max_retries = 3
@@ -20,7 +40,7 @@ async def fetch_station_location(client, station_name_tc, epsg_transformer, sile
         try:
             query = f"港鐵{station_name_tc}站"
             url = f"{GEODATA_API_URL}{query}"
-            response = await client.get(url, headers={'Accept': 'application/json'})
+            response = await client.get(url, headers={'Accept': 'application/json', 'User-Agent': ''})
             response.raise_for_status()
             data = response.json()
             if data:
@@ -61,13 +81,21 @@ async def fetch_mtr_lines_and_stations_with_locations(silent=False) -> List[Dict
     enriched_stations = []
     station_locations = {}
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, pool=None)) as client:
-        unique_stations_to_fetch = {row['Station ID']: row for row in stations}
+    unique_stations_to_fetch = {row['Station ID']: row for row in stations}
 
-        for station_id, station_data in unique_stations_to_fetch.items():
-            lat, lon = await fetch_station_location(client, station_data['Chinese Name'], epsg_transformer, silent=silent)
-            if lat and lon:
-                station_locations[station_id] = {'latitude': lat, 'longitude': lon}
+    crawler_locations = fetch_crawler_station_locations(silent=silent)
+    for station_id, station_data in unique_stations_to_fetch.items():
+        location = crawler_locations.get(station_data['Station Code'])
+        if location:
+            station_locations[station_id] = location
+
+    missing = {sid: row for sid, row in unique_stations_to_fetch.items() if sid not in station_locations}
+    if missing:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, pool=None)) as client:
+            for station_id, station_data in missing.items():
+                lat, lon = await fetch_station_location(client, station_data['Chinese Name'], epsg_transformer, silent=silent)
+                if lat and lon:
+                    station_locations[station_id] = {'latitude': lat, 'longitude': lon}
 
     for station in stations:
         location = station_locations.get(station['Station ID'])

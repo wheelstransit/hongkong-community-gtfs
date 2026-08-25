@@ -1,3 +1,4 @@
+import statistics
 import pandas as pd
 import geopandas as gpd
 from sqlalchemy.engine import Engine
@@ -1281,6 +1282,30 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                     'parent_station': f"MTR-{scode}",
                     'platform_code': platform_code
                 })
+
+            # synthesize a platform for stations missing platform data (e.g. POA, AWE)
+            sloc = srec.get('location') or {}
+            if not station_to_platforms[scode] and sloc.get('lat') is not None and sloc.get('lon') is not None:
+                amenity_id = f"synthetic-{scode}"
+                stop_id_val = f"MTR-PLATFORM-{scode}-1"
+                station_to_platforms[scode].append({
+                    'amenity_id': amenity_id,
+                    'line_dirs': [],
+                    'ref': '1',
+                    'name_en': 'Platform 1'
+                })
+                platform_amenity_to_stop_id[amenity_id] = stop_id_val
+                platform_rows.append({
+                    'stop_id': stop_id_val,
+                    'stop_name': 'Platform 1',
+                    'stop_lat': sloc.get('lat'),
+                    'stop_lon': sloc.get('lon'),
+                    'location_type': 0,
+                    'parent_station': f"MTR-{scode}",
+                    'platform_code': '1'
+                })
+                if not silent:
+                    print(f"Synthesized platform for station {scode} (no platform data in crawler dataset).")
         if platform_rows:
             real_platforms_df = pd.DataFrame(platform_rows)
             if not silent:
@@ -1289,6 +1314,34 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     except Exception as e:
         if not silent:
             print(f"Warning: could not load real MTR platforms/exits. MTR platform data will be missing. Error: {e}")
+
+    # backfill station stops missing from the DB using crawler locations
+    try:
+        stations_obj = (mtr_meta.get('stations') or {}) if mtr_meta else {}
+        known_codes = set(mtr_stations_df['station_code'].astype(str))
+        backfill_rows = []
+        for scode, srec in stations_obj.items():
+            if scode in known_codes:
+                continue
+            sloc = srec.get('location') or {}
+            if sloc.get('lat') is None or sloc.get('lon') is None:
+                continue
+            backfill_rows.append({
+                'station_code': scode,
+                'stop_name': srec.get('name_en') or scode,
+                'stop_id': f"MTR-{scode}",
+                'stop_lat': sloc['lat'],
+                'stop_lon': sloc['lon'],
+                'location_type': 1,
+                'parent_station': None
+            })
+        if backfill_rows:
+            mtr_stations_df = pd.concat([mtr_stations_df, pd.DataFrame(backfill_rows)], ignore_index=True)
+            if not silent:
+                print(f"Backfilled {len(backfill_rows)} MTR station stops missing from DB: {[r['station_code'] for r in backfill_rows]}")
+    except Exception as e:
+        if not silent:
+            print(f"Warning: MTR station backfill failed: {e}")
 
     # MTR Entrances (from DB)
     try:
@@ -2297,7 +2350,6 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
     mtr_stoptimes_rows = []
     # Compute a robust default from journey_time_data (median) else fallback 120s
     mtr_edge_times = [v for (a,b), v in jt_lookup.items() if len(a)<=4 and len(b)<=4]
-    import statistics
     try:
         median_edge = statistics.median(mtr_edge_times) if mtr_edge_times else 120.0
     except statistics.StatisticsError:
@@ -2359,9 +2411,12 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                 if plist:
                     first_platform = plist[0]
                     stop_id_val = platform_amenity_to_stop_id.get(first_platform['amenity_id'])
-                else:
-                    # no platform known for this station; skip this stop_time row
-                    continue
+            if not stop_id_val:
+                # skip but still advance prev_code for the next journey-time lookup
+                if not silent:
+                    print(f"Warning: no platform for station {station_code} on {trip_id}; dropping its stop_time.")
+                prev_code = station_code
+                continue
 
             mtr_stoptimes_rows.append({
                 'trip_id': trip_id,
@@ -2483,8 +2538,20 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
         first_agency = agency_id.split('+')[0]
         return color_map.get(first_agency)
 
-    final_routes_df['route_color'] = final_routes_df['agency_id'].apply(get_route_color)
-    final_routes_df['route_text_color'] = 'FFFFFF'
+    # agency default colors; per-route colors (e.g. MTR lines) take precedence
+    if 'route_color' not in final_routes_df.columns:
+        final_routes_df['route_color'] = None
+    agency_colors = final_routes_df['agency_id'].apply(get_route_color)
+    final_routes_df['route_color'] = final_routes_df['route_color'].where(
+        final_routes_df['route_color'].notna() & (final_routes_df['route_color'].astype(str).str.strip() != ''),
+        agency_colors
+    )
+    if 'route_text_color' not in final_routes_df.columns:
+        final_routes_df['route_text_color'] = None
+    final_routes_df['route_text_color'] = final_routes_df['route_text_color'].where(
+        final_routes_df['route_text_color'].notna() & (final_routes_df['route_text_color'].astype(str).str.strip() != ''),
+        'FFFFFF'
+    )
     if 'lr_routes_df' in locals() and not lr_routes_df.empty:
         if 'route_color' in lr_routes_df.columns:
             lr_color_lookup = (
@@ -2848,12 +2915,26 @@ def export_unified_feed(engine: Engine, output_dir: str, journey_time_data: dict
                 slices.append((start, end, int(adj)))
             return slices
 
+        # TKL branch service patterns: LHP through trains run peak-only (~7.5 min),
+        # the TIK-LHP shuttle runs non-peak only (12 min), Po Lam trains all day
+        tkl_peak_only = [('07:00:00', '10:00:00', 450), ('17:00:00', '20:00:00', 450)]
+        tkl_shuttle = [('05:30:00', '07:00:00', 720), ('10:00:00', '17:00:00', 720), ('20:00:00', '25:00:00', 720)]
+        tkl_trunk = [
+            ('05:30:00', '07:00:00', 300), ('07:00:00', '10:00:00', 210), ('10:00:00', '17:00:00', 240),
+            ('17:00:00', '20:00:00', 210), ('20:00:00', '23:00:00', 300), ('23:00:00', '25:00:00', 450)
+        ]
+        variant_slices = {
+            'MTR-TKL-LHP-DT': tkl_peak_only, 'MTR-TKL-LHP-UT': tkl_peak_only,
+            'MTR-TKL-TKS-DT': tkl_shuttle, 'MTR-TKL-TKS-UT': tkl_shuttle,
+            'MTR-TKL-DT': tkl_trunk, 'MTR-TKL-UT': tkl_trunk,
+        }
+
         new_rows = []
         # Heavy rail
         for lc, trips in mtr_line_trips.items():
             slices = build_slices(lc)
             for trip in trips:
-                for start, end, headway in slices:
+                for start, end, headway in variant_slices.get(trip, slices):
                     new_rows.append({'trip_id': trip, 'start_time': start, 'end_time': end, 'headway_secs': headway})
         # Light Rail (use defaults only for trips without explicit frequencies)
         for lc, trips in lr_line_trips.items():

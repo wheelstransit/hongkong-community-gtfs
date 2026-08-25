@@ -31,7 +31,7 @@ def check_and_add_result(results, query_name, stop_info, exit_char, barrier_free
 
 async def fetch_mtr_exits(silent=False):
     if not silent:
-        print("Fetching MTR exit data from opendata.mtr.com.hk and geodata.gov.hk...")
+        print("Fetching MTR exit data...")
 
     final_results = []
     mtr_stops = {}
@@ -67,11 +67,45 @@ async def fetch_mtr_exits(silent=False):
             if not silent:
                 print(f"Error fetching barrier-free facilities: {e}")
 
-        # Crawl exit geolocations
-        for key, stop in mtr_stops.items():
+        # Exit geolocations from our mtr-platform-exits-crawler dataset
+        try:
+            crawler_res = await client.get(
+                "https://raw.githubusercontent.com/wheelstransit/mtr-platform-exits-crawler/refs/heads/main/data/output/mtr_data_complete.json"
+            )
+            crawler_res.raise_for_status()
+            crawler_data = crawler_res.json()
+            stations_obj = crawler_data.get('stations') or {}
+            exits_obj = crawler_data.get('exits') or {}
+            venue_to_code = {s['venue_id']: code for code, s in stations_obj.items() if s.get('venue_id')}
+            code_to_stop = {stop['station_code']: stop for stop in mtr_stops.values()}
+            for exit_rec in exits_obj.values():
+                station_code = venue_to_code.get(exit_rec.get('venue_id'))
+                stop = code_to_stop.get(station_code)
+                coords = exit_rec.get('coordinates') or {}
+                name_en = (exit_rec.get('name_en') or '').strip()
+                exit_code = name_en.replace('Exit', '').strip()
+                if not stop or not exit_code or coords.get('lat') is None or coords.get('lon') is None:
+                    continue
+                final_results.append({
+                    "station_code": station_code,
+                    "station_name_en": stop["name_en"],
+                    "station_name_zh": stop["name_tc"],
+                    "exit": exit_code,
+                    "lat": coords['lat'],
+                    "lon": coords['lon'],
+                    "barrier_free": exit_code in stop,
+                })
+            if not silent:
+                print(f"Fetched {len(final_results)} MTR exits from mtr-platform-exits-crawler.")
+        except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError, KeyError) as e:
+            if not silent:
+                print(f"Warning: could not fetch crawler exit data, falling back to locationSearch: {e}")
+
+        # Fallback: crawl exit geolocations via locationSearch
+        for key, stop in ({} if final_results else mtr_stops).items():
             try:
                 geo_query = '港鐵' + stop['name_tc'] + '站進出口'
-                geo_res = await client.get("https://geodata.gov.hk/gs/api/v1.0.0/locationSearch?q=" + geo_query)
+                geo_res = await client.get("https://www.map.gov.hk/gs/api/v1.0.0/locationSearch?q=" + geo_query, headers={'Accept': 'application/json', 'User-Agent': ''})
                 geo_res.raise_for_status()
                 geo_results = geo_res.json()
 
@@ -83,7 +117,7 @@ async def fetch_mtr_exits(silent=False):
                         exit_code = char + str(i)
                         q = '港鐵' + stop['name_tc'] + '站-' + exit_code + '進出口'
                         check_and_add_result(geo_results, q, stop, exit_code, exit_code in stop, final_results)
-            except httpx.RequestError as e:
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
                 if not silent:
                     print(f"Could not fetch geodata for {stop['name_tc']}: {e}")
                 continue

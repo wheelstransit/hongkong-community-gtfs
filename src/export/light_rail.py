@@ -27,7 +27,7 @@ DEFAULT_FREQUENCIES = (
 )
 FALLBACK_SECONDS_PER_STOP = 180
 LIGHT_RAIL_ROUTES_AND_STOPS_URL = "https://opendata.mtr.com.hk/data/light_rail_routes_and_stops.csv"
-GEODATA_BASE_URL = "https://geodata.gov.hk/gs/api/v1.0.0/locationSearch?q="
+GEODATA_BASE_URL = "https://www.map.gov.hk/gs/api/v1.0.0/locationSearch?q="
 LIGHT_RAIL_STOP_SUFFIX = "\u8f15\u9435\u7ad9"
 ROUTE_COLORS = {
     "505": "DA2128",
@@ -140,6 +140,22 @@ async def _fetch_route_and_stop_data(silent: bool = False) -> Tuple[Dict[str, Di
             logging.error("Could not fetch Light Rail route data: %s", exc)
             return {}, {}
 
+        hkbus_locations: Optional[Dict[str, Dict]] = None  # lazy fallback for failed geocodes
+
+        async def get_hkbus_locations() -> Dict[str, Dict]:
+            nonlocal hkbus_locations
+            if hkbus_locations is None:
+                try:
+                    hkbus_response = await client.get(
+                        "https://raw.githubusercontent.com/hkbus/hk-bus-crawling/gh-pages/routeFareList.min.json"
+                    )
+                    hkbus_response.raise_for_status()
+                    hkbus_locations = hkbus_response.json().get("stopList", {})
+                except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as exc:
+                    logging.warning("Could not fetch hk-bus-crawling stop list: %s", exc)
+                    hkbus_locations = {}
+            return hkbus_locations
+
         csv_reader = csv.reader(response.text.splitlines())
         next(csv_reader, None)
         for row in csv_reader:
@@ -179,21 +195,28 @@ async def _fetch_route_and_stop_data(silent: bool = False) -> Tuple[Dict[str, Di
                     "stop_lon": None,
                 }
                 stop_list[light_rail_id] = stop_record
+
                 try:
                     encoded_query = quote(f"{stop_name_tc}{LIGHT_RAIL_STOP_SUFFIX}")
                     geo_url = f"{GEODATA_BASE_URL}{encoded_query}"
-                    geo_response = await client.get(geo_url, headers={"Accept": "application/json"})
+                    geo_response = await client.get(geo_url, headers={"Accept": "application/json", "User-Agent": ""})
                     geo_response.raise_for_status()
                     data = geo_response.json()
                     if isinstance(data, list) and data:
                         lon, lat = transformer.transform(data[0]["x"], data[0]["y"])
                         stop_record["stop_lat"] = lat
                         stop_record["stop_lon"] = lon
-                    elif not silent:
-                        logging.warning("No geodata result for Light Rail stop %s", stop_name_tc)
-                except (httpx.RequestError, KeyError, IndexError, ValueError, json.JSONDecodeError) as exc:
+                except (httpx.RequestError, httpx.HTTPStatusError, KeyError, IndexError, ValueError, json.JSONDecodeError) as exc:
                     if not silent:
                         logging.warning("Failed to fetch geodata for Light Rail stop %s: %s", stop_name_tc, exc)
+
+                if stop_record["stop_lat"] is None:
+                    hkbus_location = ((await get_hkbus_locations()).get(light_rail_id) or {}).get("location") or {}
+                    if hkbus_location.get("lat") is not None and hkbus_location.get("lng") is not None:
+                        stop_record["stop_lat"] = float(hkbus_location["lat"])
+                        stop_record["stop_lon"] = float(hkbus_location["lng"])
+                    elif not silent:
+                        logging.warning("No location found for Light Rail stop %s", stop_name_tc)
 
     return route_list, stop_list
 
