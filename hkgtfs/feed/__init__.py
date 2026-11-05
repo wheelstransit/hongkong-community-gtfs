@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 AGENCY_COLORS = {"KMB": "EE171F", "CTB": "0053B9", "NLB": "8AB666", "MTRB": "AE2A42", "GMB": "34C759", "MTRR": "003DA5", "LR": "FF8800", "FERRY": "0099CC"}
 ROUTE_COLUMNS = ["route_id", "agency_id", "route_short_name", "route_long_name", "route_type", "network_id", "route_color", "route_text_color"]
-TRIP_COLUMNS = ["route_id", "service_id", "trip_id", "trip_headsign", "direction_id", "shape_id"]
+TRIP_COLUMNS = ["route_id", "service_id", "trip_id", "trip_headsign", "direction_id", "shape_id", "bikes_allowed"]
 STOP_TIME_COLUMNS = ["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"]
 SPECIAL_FARE_COLUMNS = ["special_fare_id", "rule_type", "trip_id", "onboarding_stop_id", "offboarding_stop_id", "price", "currency"]
 
@@ -147,6 +147,8 @@ def build_feed(db: Store, raw: dict, out: Path, waypoints: Path, version: str):
     stop_table["stop_name"] = stop_table["stop_name"].map(fix_shouting)
     routes["route_long_name"] = routes["route_long_name"].map(fix_shouting)
     trips["trip_headsign"] = trips["trip_headsign"].map(fix_shouting)
+    ferries = trips["route_id"].isin(routes.loc[routes["route_type"] == 4, "route_id"])
+    trips["bikes_allowed"] = pd.array([1 if ferry else None for ferry in ferries], dtype="Int64")
     trips = trips[trips["trip_id"].isin(runnable)]
     stop_times = stop_times[stop_times["trip_id"].isin(runnable)]
     frequencies = frequencies[frequencies["trip_id"].isin(runnable)]
