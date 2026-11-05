@@ -22,6 +22,27 @@ Instead of manual editing, this project generates the feeds **procedurally**. We
 ## Hosted GTFS
 https://feed.justusewheels.com/
 
+## Development
+Needs Python 3.11+ and `mdbtools` (`apt install mdbtools` / `brew install mdbtools`).
+
+```sh
+pip install -r requirements.txt
+python -m hkgtfs                      # fetch whatever is not cached yet, build output/hk.gtfs.zip
+python -m hkgtfs --offline            # rebuild from .cache only (about a minute)
+python -m hkgtfs --refresh kmb,mtr    # re-fetch some sources; --refresh all for everything
+```
+
+Raw data is cached per source in `.cache/`. Green minibus data is fetched incrementally using the API's last-update timestamps, so only the first fetch is slow.
+
+`scripts/postprocess.sh` turns `output/hk.gtfs.zip` into the published feeds (needs `gtfstidy`, `osmium` and Docker for pfaedle).
+
+| Path | What |
+| --- | --- |
+| `hkgtfs/sources/` | one module per upstream data source |
+| `hkgtfs/load.py` | raw data → in-memory DuckDB tables |
+| `hkgtfs/feed/` | GTFS tables, one module per operator or GTFS concern |
+| `hkgtfs/realtime/` | GTFS-RT service alerts from `data/rt/events` |
+
 ## License
 This code of the project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
 

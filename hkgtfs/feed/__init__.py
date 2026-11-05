@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..db import Store
-from .agency import build_agency
+from .agency import build_agency, build_feed_info
 from .calendar import build_calendar
 from .citybus import build_citybus
 from .directions import fix_inverted_directions
@@ -81,7 +81,7 @@ def _stop_times(frames: list[pd.DataFrame], stops: pd.DataFrame) -> pd.DataFrame
     return stop_times[valid]
 
 
-def build_feed(db: Store, raw: dict, out: Path, waypoints: Path):
+def build_feed(db: Store, raw: dict, out: Path, waypoints: Path, version: str):
     gtfs = out / "gtfs"
     shutil.rmtree(gtfs, ignore_errors=True)
     gtfs.mkdir(parents=True)
@@ -133,8 +133,18 @@ def build_feed(db: Store, raw: dict, out: Path, waypoints: Path):
     special_fares = [df for df in (generate_special_fare_rules(fares, stop_times), generate_mtr_special_fare_rules(db),
                                    generate_light_rail_special_fare_rules(db)) if not df.empty]
 
+    counts = stop_times["trip_id"].value_counts()
+    runnable = set(counts[counts >= 2].index)
+    trips = trips[trips["trip_id"].isin(runnable)]
+    stop_times = stop_times[stop_times["trip_id"].isin(runnable)]
+    frequencies = frequencies[frequencies["trip_id"].isin(runnable)]
+    translations = translations[(translations["table_name"] != "trips") | translations["record_id"].isin(runnable)]
+    fare_stages = fare_stages[fare_stages["trip_id"].isin(runnable)]
+    special_fares = [df[(df["rule_type"] != "trip") | df["trip_id"].isin(runnable)] for df in special_fares]
+
     tables = {
         "agency.txt": build_agency(),
+        "feed_info.txt": build_feed_info(version, calendar),
         "stops.txt": stops.table,
         "routes.txt": routes,
         "trips.txt": trips[TRIP_COLUMNS],

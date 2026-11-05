@@ -9,12 +9,8 @@ from .text import smart_title_case
 
 log = logging.getLogger(__name__)
 
-
 def _load_mtr_terminal_maps(db: Store) -> Tuple[dict, dict]:
-    """Load a mapping of (line_code, direction_variant) -> terminal station names (EN, TC).
-
-    Returns two dicts: (en_map, tc_map)
-    """
+    """(line_code, direction variant) -> terminal station name, as (English, Chinese) lookups."""
     try:
         query = '''
             SELECT "Line Code" AS line_code,
@@ -31,7 +27,6 @@ def _load_mtr_terminal_maps(db: Store) -> Tuple[dict, dict]:
     if df.empty:
         return {}, {}
 
-    # coerce sequence to numeric and drop bad rows
     df['seq_num'] = pd.to_numeric(df['sequence'], errors='coerce')
     df = df.dropna(subset=['seq_num'])
     if df.empty:
@@ -59,13 +54,11 @@ def _load_mtr_terminal_maps(db: Store) -> Tuple[dict, dict]:
         en_value = str(rec.last_en).strip() if pd.notna(rec.last_en) else ''
         tc_value = str(rec.last_tc).strip() if pd.notna(rec.last_tc) else ''
 
-        # store normalized keys and some fallbacks
         if en_value and en_value.lower() != 'nan':
             en_map[(rec.line_code, dir_raw)] = en_value
         if tc_value and tc_value.lower() != 'nan':
             tc_map[(rec.line_code, dir_raw)] = tc_value
 
-        # add variants (upper/lower and suffix after dash)
         fallback_keys = {(rec.line_code, dir_raw.upper()), (rec.line_code, dir_raw.lower())}
         if '-' in dir_raw:
             suffix = dir_raw.split('-', 1)[-1]
@@ -83,7 +76,6 @@ def _load_mtr_terminal_maps(db: Store) -> Tuple[dict, dict]:
 
     return en_map, tc_map
 
-
 def _resolve_mtr_terminal(line_code: str, variant: str, direction_id: Optional[Union[int, float, str]], lookup: dict) -> Optional[str]:
     """Resolve the terminal station name from a lookup using a variety of candidate keys."""
     if not lookup or not line_code:
@@ -97,7 +89,6 @@ def _resolve_mtr_terminal(line_code: str, variant: str, direction_id: Optional[U
             suffix = variant_str.split('-', 1)[-1]
             candidates.extend([(line_code, suffix), (line_code, suffix.upper()), (line_code, suffix.lower())])
 
-    # direction-based fallback
     dir_value = None
     if direction_id is not None and direction_id != '':
         try:
@@ -124,52 +115,32 @@ def _resolve_mtr_terminal(line_code: str, variant: str, direction_id: Optional[U
 
     return None
 
-
 def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
-    """Populate trip_headsign for each trip across agencies (English only).
-
-    Rules (current heuristic):
-      KMB: use direction-specific dest_en from kmb_routes (matched on route, bound, service_type)
-      CTB: use dest_en from citybus_routes for that direction (bound O = outbound, I = inbound)
-      NLB: parse routeName_e (Origin > Destination) => bound O dest part, bound I origin part
-      MTRB: use last stop name for (route_id, direction) from mtrbus_stop_sequences
-      GMB: fallback to route_short_name (insufficient structured data for direction) or parsed if available later
-    """
+    """English trip_headsign per trip: the operator's destination for the trip's direction, else the route number."""
     if trips_df.empty:
         trips_df['trip_headsign'] = ''
         return trips_df
 
-    # Ensure columns for later joins exist
     work_df = trips_df.copy()
     if 'trip_headsign' not in work_df.columns:
         work_df['trip_headsign'] = ''
 
-    # Derive agency_id from route_id if missing (e.g., final trips assembly omitted it)
     if 'agency_id' not in work_df.columns and 'route_id' in work_df.columns:
         work_df['agency_id'] = work_df['route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[0] if isinstance(rid, str) and '-' in rid else str(rid))
 
-    # Derive route_short_name consistently if absent. Patterns:
-    #  KMB-<route> / CTB-<route> / NLB-<routeNo> => two segments
-    #  GMB-<region>-<code> => three segments we want region-code
-    #  MTRB-<id>, others fallback to second segment if exists
     if 'route_short_name' not in work_df.columns and 'route_id' in work_df.columns:
         def _derive_short(rid: str):
             if not isinstance(rid, str):
                 return None
             parts = rid.split('-')
             if len(parts) == 3 and parts[0] == 'GMB':
-                return f"{parts[1]}-{parts[2]}"  # region-code
+                return f"{parts[1]}-{parts[2]}"
             if len(parts) >= 2:
                 return parts[1]
             return rid
 
         work_df['route_short_name'] = work_df['route_id'].apply(_derive_short)
 
-    # NOTE: Previous implementation used merges then wrote using merge frame indices, causing
-    # misalignment (RangeIndex) and cross-agency contamination. Replaced with explicit mapping
-    # dictionaries keyed by original row index to guarantee correctness.
-
-    # KMB
     try:
         kmb_mask = work_df['agency_id'] == 'KMB'
         if kmb_mask.any():
@@ -181,7 +152,6 @@ def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
             kmb_routes = db.read("SELECT unique_route_id, dest_en FROM kmb_routes")
             parts = kmb_routes['unique_route_id'].str.split('_', expand=True)
             kmb_routes['route'] = parts[0]; kmb_routes['bound'] = parts[1]; kmb_routes['service_type'] = parts[2]
-            # Apply title case to destinations
             kmb_routes['dest_en'] = kmb_routes['dest_en'].apply(smart_title_case)
             kmb_lookup = kmb_routes.drop_duplicates(['route','bound','service_type']).set_index(['route','bound','service_type'])['dest_en'].to_dict()
             dests = []
@@ -192,7 +162,6 @@ def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         log.warning(f"Headsign warning (KMB map): {e}")
 
-    # CTB
     try:
         ctb_mask = work_df['agency_id'] == 'CTB'
         if ctb_mask.any():
@@ -207,7 +176,6 @@ def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         log.warning(f"Headsign warning (CTB map): {e}")
 
-    # NLB
     try:
         nlb_mask = work_df['agency_id'] == 'NLB'
         if nlb_mask.any():
@@ -239,7 +207,6 @@ def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
             mtr_subset = work_df.loc[mtrb_mask]
             mtr_routes_df = db.read("SELECT route_id, route_name_eng FROM mtrbus_routes")
             mtr_routes_df['route_short_name'] = mtr_routes_df['route_id'].astype(str)
-            # Deduplicate by route_id, keeping first occurrence (main route)
             mtr_routes_df = mtr_routes_df.drop_duplicates('route_short_name', keep='first')
             split_df = mtr_routes_df['route_name_eng'].str.split(' to ', n=1, expand=True)
             mtr_routes_df['origin_guess'] = split_df[0]
@@ -262,7 +229,6 @@ def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
             gmb_routes = db.read('SELECT region, route_code, orig_en_primary, dest_en_primary, is_circular_any FROM gmb_routes')
             gmb_routes['route_short_name'] = gmb_routes['region'].astype(str)+'-'+gmb_routes['route_code'].astype(str)
             gmb_routes = gmb_routes.drop_duplicates('route_short_name', keep='first')
-            # Outbound -> destination primary, Inbound -> origin primary
             gmb_routes['headsign_outbound'] = gmb_routes.apply(lambda r: r['dest_en_primary'] if r.get('dest_en_primary') else r['route_short_name'], axis=1)
             gmb_routes['headsign_inbound'] = gmb_routes.apply(lambda r: r['orig_en_primary'] if r.get('orig_en_primary') else r['route_short_name'], axis=1)
             gmb_lookup = gmb_routes.set_index('route_short_name')[['headsign_outbound','headsign_inbound']].to_dict('index')
@@ -283,7 +249,6 @@ def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         log.warning(f"Headsign warning (GMB map): {e}")
 
-    # MTR Rail (English)
     try:
         mtrr_mask = work_df['agency_id'] == 'MTRR'
         if mtrr_mask.any():
@@ -311,49 +276,15 @@ def generate_trip_headsigns(db: Store, trips_df: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         log.warning(f"Headsign warning (MTR Rail map): {e}")
 
-    # Final cleanup: ensure string type and fill blanks with route_short_name if still empty
     if 'route_short_name' in work_df.columns:
         empty_mask = (work_df['trip_headsign'].isna()) | (work_df['trip_headsign'].astype(str).str.strip()=='')
         work_df.loc[empty_mask, 'trip_headsign'] = work_df.loc[empty_mask, 'route_short_name'].astype(str)
     else:
-        # Derive a temporary route_short_name to fill empties later
         work_df['__tmp_route_short_name'] = work_df['route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[1] if isinstance(rid, str) and '-' in rid else str(rid))
         empty_mask = (work_df['trip_headsign'].isna()) | (work_df['trip_headsign'].astype(str).str.strip()=='')
         work_df.loc[empty_mask, 'trip_headsign'] = work_df.loc[empty_mask, '__tmp_route_short_name'].astype(str)
 
-    # Second-pass normalization for NLB and GMB if still equal to short name (indicates mapping failure)
     try:
-        # NLB normalization
-        nlb_sec_mask = work_df['agency_id']=='NLB'
-        if nlb_sec_mask.any():
-            # ensure normalized short name (strip agency prefix)
-            if 'route_short_name' not in work_df.columns:
-                work_df.loc[nlb_sec_mask,'__norm_rsn'] = work_df.loc[nlb_sec_mask,'route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[1] if isinstance(rid, str) and '-' in rid else str(rid))
-                rsn_series = work_df['__norm_rsn']
-            else:
-                rsn_series = work_df['route_short_name']
-            # Fetch route names again if needed
-            nlb_routes = db.read('SELECT "routeNo" as route_no, "routeName_e" as route_name FROM nlb_routes')
-            nlb_routes['route_no'] = nlb_routes['route_no'].astype(str)
-            split_df = nlb_routes['route_name'].str.split(' > ', n=1, expand=True)
-            nlb_routes['origin_en'] = split_df[0]
-            nlb_routes['destination_en'] = split_df[1].fillna(split_df[0])
-            nlb_lookup = nlb_routes.set_index('route_no')[['origin_en','destination_en']].to_dict('index')
-            updated = []
-            for idx in work_df.loc[nlb_sec_mask].index:
-                current = work_df.at[idx,'trip_headsign']
-                rsn = str(rsn_series.loc[idx])
-                rec = nlb_lookup.get(rsn)
-                if rec and (current == rsn or not current):
-                    bound = work_df.at[idx,'bound'] if 'bound' in work_df.columns else ({0:'O',1:'I'}.get(work_df.at[idx,'direction_id'], 'O'))
-                    updated.append((idx, rec['destination_en'] if bound=='O' else rec['origin_en']))
-            for idx,val in updated:
-                work_df.at[idx,'trip_headsign'] = val
-    except Exception as e:
-        log.warning(f"Headsign second-pass warning (NLB): {e}")
-
-    try:
-        # GMB second pass (if headsign still short name)
         gmb_sec_mask = work_df['agency_id']=='GMB'
         if gmb_sec_mask.any():
             gmb_routes = db.read('SELECT region, route_code, orig_en_primary, dest_en_primary FROM gmb_routes')
@@ -407,7 +338,6 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
             if stripped:
                 headsigns.at[idx] = stripped
 
-    # KMB
     try:
         kmb_mask = work_df['agency_id'] == 'KMB'
         if kmb_mask.any():
@@ -433,7 +363,6 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
     except Exception as e:
         log.warning(f"Headsign TC warning (KMB map): {e}")
 
-    # CTB
     try:
         ctb_mask = work_df['agency_id'] == 'CTB'
         if ctb_mask.any():
@@ -448,7 +377,6 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
     except Exception as e:
         log.warning(f"Headsign TC warning (CTB map): {e}")
 
-    # NLB
     try:
         nlb_mask = work_df['agency_id'] == 'NLB'
         if nlb_mask.any():
@@ -476,14 +404,12 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
     except Exception as e:
         log.warning(f"Headsign TC warning (NLB map): {e}")
 
-    # MTR Bus
     try:
         mtrb_mask = work_df['agency_id'] == 'MTRB'
         if mtrb_mask.any():
             mtr_subset = work_df.loc[mtrb_mask]
             mtr_routes_df = db.read("SELECT route_id, route_name_chi FROM mtrbus_routes")
             mtr_routes_df['route_short_name'] = mtr_routes_df['route_id'].astype(str)
-            # Deduplicate by route_id, keeping first occurrence (main route)
             mtr_routes_df = mtr_routes_df.drop_duplicates('route_short_name', keep='first')
 
             def split_cn(text):
@@ -514,7 +440,6 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
     except Exception as e:
         log.warning(f"Headsign TC warning (MTRB map): {e}")
 
-    # GMB
     try:
         gmb_mask = work_df['agency_id'] == 'GMB'
         if gmb_mask.any():
@@ -541,7 +466,6 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
     except Exception as e:
         log.warning(f"Headsign TC warning (GMB map): {e}")
 
-    # MTR Rail (TC): use terminal name Chinese mapping
     try:
         mtrr_mask = work_df['agency_id'] == 'MTRR'
         if mtrr_mask.any():
@@ -567,7 +491,6 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
     except Exception as e:
         log.warning(f"Headsign TC warning (MTR Rail map): {e}")
 
-    # Fill empties using fallbacks
     headsigns = headsigns.fillna('').astype(str)
     empty_mask = headsigns.str.strip() == ''
     if english_headsigns is not None:
@@ -580,33 +503,6 @@ def generate_trip_headsigns_tc(db: Store, trips_df: pd.DataFrame, english_headsi
             headsigns.loc[empty_mask] = work_df.loc[empty_mask, 'route_short_name'].astype(str)
         else:
             headsigns.loc[empty_mask] = work_df.loc[empty_mask, 'route_id'].astype(str)
-
-    # Second-pass normalization for NLB and GMB similar to English
-    try:
-        nlb_sec_mask = work_df['agency_id']=='NLB'
-        if nlb_sec_mask.any():
-            if 'route_short_name' not in work_df.columns:
-                work_df.loc[nlb_sec_mask,'__norm_rsn'] = work_df.loc[nlb_sec_mask,'route_id'].astype(str).apply(lambda rid: rid.split('-', 1)[1] if isinstance(rid, str) and '-' in rid else str(rid))
-                rsn_series = work_df['__norm_rsn']
-            else:
-                rsn_series = work_df['route_short_name']
-            nlb_routes = db.read('SELECT "routeNo" as route_no, "routeName_c" as route_name FROM nlb_routes')
-            nlb_routes['route_no'] = nlb_routes['route_no'].astype(str)
-            clean = nlb_routes['route_name'].astype(str).str.replace('\u00a0',' ', regex=False)
-            clean = clean.str.replace('  > ', ' > ', regex=False)
-            split_df = clean.str.split(' > ', n=1, expand=True)
-            nlb_routes['origin_tc'] = split_df[0]
-            nlb_routes['destination_tc'] = split_df[1].fillna(split_df[0])
-            nlb_lookup = nlb_routes.set_index('route_no')[['origin_tc','destination_tc']].to_dict('index')
-            for idx in work_df.loc[nlb_sec_mask].index:
-                current = headsigns.at[idx]
-                rsn = str(rsn_series.loc[idx])
-                rec = nlb_lookup.get(rsn)
-                if rec and (current == rsn or not str(current).strip()):
-                    bound = work_df.at[idx,'bound'] if 'bound' in work_df.columns else ({0:'O',1:'I'}.get(work_df.at[idx,'direction_id'], 'O'))
-                    headsigns.at[idx] = rec['destination_tc'] if bound=='O' else rec['origin_tc']
-    except Exception as e:
-        log.warning(f"Headsign TC second-pass warning (NLB): {e}")
 
     try:
         gmb_sec_mask = work_df['agency_id']=='GMB'

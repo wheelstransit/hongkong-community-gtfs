@@ -58,8 +58,7 @@ def build_ferry(db: Store) -> Ferry:
             trip_id = _template_id(template)
             times = first["departure_seconds"].tolist()
             if len(first) < 2:
-                start = to_hhmmss(int(times[0]))
-                frequencies.append({"trip_id": trip_id, "start_time": start, "end_time": start, "headway_secs": 86400})
+                frequencies.append({"trip_id": trip_id, "start_time": to_hhmmss(int(times[0])), "end_time": to_hhmmss(int(times[0]) + 86400), "headway_secs": 86400})
                 continue
             intervals = [b - a for a, b in zip(times, times[1:])]
             block_start, current = 0, max(intervals[0], 60)
@@ -69,12 +68,10 @@ def build_ferry(db: Store) -> Ferry:
                 if diff > 0.1 or i == len(intervals) - 1:
                     block_end = i if diff > 0.1 else i + 1
                     block = intervals[block_start:block_end]
-                    frequencies.append({
-                        "trip_id": trip_id,
-                        "start_time": to_hhmmss(int(times[block_start])),
-                        "end_time": to_hhmmss(int(times[block_end])),
-                        "headway_secs": max(60, int(sum(block) / len(block)) if block else 1800),
-                    })
+                    headway = max(60, int(sum(block) / len(block)) if block else 1800)
+                    start, end = int(times[block_start]), int(times[block_end])
+                    frequencies.append({"trip_id": trip_id, "start_time": to_hhmmss(start),
+                                        "end_time": to_hhmmss(end if end > start else start + headway), "headway_secs": headway})
                     block_start, current = i, max(intervals[i], 60)
 
     if keep:

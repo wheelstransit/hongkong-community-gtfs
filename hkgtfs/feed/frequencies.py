@@ -12,7 +12,6 @@ ALLOWED_GOV_AGENCIES = {
     "FERRY": {"FERRY"},
 }
 
-
 def trip_id_mapping(trips: pd.DataFrame, gov_trips: pd.DataFrame) -> pd.DataFrame:
     """Map government trip_ids to our trip_ids, by gov_route_id when known, else by route number within the operator's agencies."""
     mappings = []
@@ -36,7 +35,6 @@ def trip_id_mapping(trips: pd.DataFrame, gov_trips: pd.DataFrame) -> pd.DataFram
             mappings.append(m[["trip_id", "new_trip_id"]].rename(columns={"trip_id": "original_trip_id"}).drop_duplicates())
     return pd.concat(mappings, ignore_index=True).drop_duplicates()
 
-
 def build_frequencies(mapping: pd.DataFrame, gov_frequencies: pd.DataFrame, gov_stop_times: pd.DataFrame,
                       ferry: pd.DataFrame, light_rail: pd.DataFrame, rail: pd.DataFrame) -> pd.DataFrame:
     freq = gov_frequencies.merge(mapping, left_on="trip_id", right_on="original_trip_id")
@@ -55,14 +53,13 @@ def build_frequencies(mapping: pd.DataFrame, gov_frequencies: pd.DataFrame, gov_
         freq = pd.concat([freq, rail], ignore_index=True)
     return freq
 
-
 def generate_frequencies_from_schedule(
     trip_id_mapping: pd.DataFrame,
     existing_frequencies_df: pd.DataFrame,
     gov_stop_times_df: pd.DataFrame
 ) -> pd.DataFrame:
     """Derive frequency entries for trips lacking gov-provided headway data."""
-    SINGLE_DEPARTURE_HEADWAY_SECS = 24 * 3600  # treat single departures as once-per-day service
+    SINGLE_DEPARTURE_HEADWAY_SECS = 24 * 3600
     required_cols = ['trip_id', 'start_time', 'end_time', 'headway_secs']
     if trip_id_mapping is None or trip_id_mapping.empty:
         return pd.DataFrame(columns=required_cols)
@@ -114,7 +111,6 @@ def generate_frequencies_from_schedule(
             if sec is not None
         })
         if len(sec_values) < 2:
-            # synthesize a once-per-day headway to keep the trip in frequencies.txt
             start_sec = sec_values[0]
             fallback_records.append({
                 'trip_id': new_trip_id,
@@ -144,7 +140,6 @@ def generate_frequencies_from_schedule(
                 'headway_secs': headway
             })
 
-        # Extend final interval using last observed headway so last departure is included
         last_departure_sec = sec_values[-1]
         last_headway = headway_segments[-1][2]
         fallback_records.append({

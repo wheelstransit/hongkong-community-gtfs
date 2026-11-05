@@ -3,7 +3,7 @@ name: Build GTFS-RT Alerts
 on:
   push:
     paths:
-      - 'src/realtime/**'
+      - 'hkgtfs/realtime/**'
       - 'data/rt/events/**'
       - '.github/workflows/build-alerts.yml'
       - 'requirements.txt'
@@ -28,7 +28,7 @@ jobs:
 
       - name: Build alerts.pb
         run: |
-          python -m src.realtime.build_alerts
+          python -m hkgtfs.realtime.build_alerts
       
       - name: Generate hash
         id: hash

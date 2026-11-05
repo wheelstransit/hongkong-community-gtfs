@@ -13,13 +13,11 @@ BUNDLED_SCHEDULE = Path(__file__).resolve().parents[1] / "data" / "light_rail_sc
 GEOCODER_URL = "https://www.map.gov.hk/gs/api/v1.0.0/locationSearch?q="
 _hk1980 = Transformer.from_crs("epsg:2326", "epsg:4326")
 
-
 def geocode(query: str):
     results = get_json(GEOCODER_URL + query, headers={"Accept": "application/json", "User-Agent": ""}, timeout=30)
     if not results:
         return None
     return _hk1980.transform(results[0]["y"], results[0]["x"])
-
 
 def parse_light_rail_schedule(html_content: str) -> dict:
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -48,7 +46,6 @@ def parse_light_rail_schedule(html_content: str) -> dict:
         if not rows:
             continue
 
-        # Bi-directional routes have "To" in the second header column.
         if len(headers) > 1 and "To" in headers[1]:
             header_row = table.find('tr')
             if not header_row:
@@ -89,7 +86,6 @@ def parse_light_rail_schedule(html_content: str) -> dict:
                         "last_train": last_train_d2
                     })
         else:
-            # Circular routes: one set of times per stop.
             schedule_data[route_title]["circular"] = []
             for row in rows[1:]:
                 cells = row.find_all('td')
@@ -107,14 +103,12 @@ def parse_light_rail_schedule(html_content: str) -> dict:
 
     return schedule_data
 
-
 def fetch_schedule():
     try:
         schedule = parse_light_rail_schedule(get(SCHEDULE_URL, timeout=30).text)
     except Exception:
         schedule = {}
     return schedule or json.loads(BUNDLED_SCHEDULE.read_text(encoding="utf-8"))
-
 
 def fetch_stops(routes_and_stops: list[dict]):
     stops, hkbus = {}, None

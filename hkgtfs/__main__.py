@@ -29,7 +29,7 @@ def main():
     raw = load_sources(args.cache, refresh, args.offline)
     db = Store()
     load_all(db, raw)
-    build_feed(db, raw, args.out, args.cache / "waypoints")
+    build_feed(db, raw, args.out, args.cache / "waypoints", time.strftime("%Y%m%d"))
     logging.info("done in %.0fs", time.monotonic() - start)
 
 

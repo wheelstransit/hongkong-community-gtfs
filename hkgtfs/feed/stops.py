@@ -65,9 +65,9 @@ def _platforms(crawler: dict, station_to_platforms: dict, platform_stop_ids: dic
             amenity_id = platform.get("amenity_id") or key
             name = platform.get("name_en") or platform.get("name_zh") or f"Platform {platform.get('ref', '')}"
             ref = str(platform.get("ref")) if platform.get("ref") is not None else None
-            station_to_platforms[code].append({"amenity_id": amenity_id, "line_dirs": platform.get("lines_and_directions") or [],
-                                               "ref": ref, "name_en": name})
             stop_id = f"MTR-PLATFORM-{code}-{ref}" if ref else f"MTR-PLATFORM-{code}-{amenity_id}"
+            station_to_platforms[code].append({"amenity_id": amenity_id, "line_dirs": platform.get("lines_and_directions") or [],
+                                               "ref": ref, "name_en": name, "stop_id": stop_id})
             platform_stop_ids[amenity_id] = stop_id
             coords = platform.get("coordinates") or {}
             rows.append({"stop_id": stop_id, "stop_name": f"Platform {ref}" if ref else name, "stop_lat": coords.get("lat"),
@@ -75,7 +75,7 @@ def _platforms(crawler: dict, station_to_platforms: dict, platform_stop_ids: dic
         location = station.get("location") or {}
         if not station_to_platforms[code] and location.get("lat") is not None and location.get("lon") is not None:
             amenity_id, stop_id = f"synthetic-{code}", f"MTR-PLATFORM-{code}-1"
-            station_to_platforms[code].append({"amenity_id": amenity_id, "line_dirs": [], "ref": "1", "name_en": "Platform 1"})
+            station_to_platforms[code].append({"amenity_id": amenity_id, "line_dirs": [], "ref": "1", "name_en": "Platform 1", "stop_id": stop_id})
             platform_stop_ids[amenity_id] = stop_id
             rows.append({"stop_id": stop_id, "stop_name": "Platform 1", "stop_lat": location.get("lat"), "stop_lon": location.get("lon"),
                          "location_type": 0, "parent_station": f"MTR-{code}", "platform_code": "1"})
@@ -127,4 +127,5 @@ def build_stops(db: Store, crawler: dict, ferry_stops: pd.DataFrame) -> Stops:
         if col not in table.columns:
             table[col] = None
     table["location_type"] = table["location_type"].fillna(0).astype(int)
+    table["stop_name"] = table["stop_name"].str.strip()
     return Stops(table[COLUMNS], operator, stations, stations_raw, exits, entrances, station_to_platforms, platform_stop_ids)

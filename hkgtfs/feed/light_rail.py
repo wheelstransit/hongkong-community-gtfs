@@ -286,7 +286,10 @@ def _build_frequencies_dataframe(route_list: Dict[str, Dict]) -> pd.DataFrame:
 
 
 def build_light_rail_gtfs_data(routes_and_stops: List[Dict], schedule_data: Dict) -> LightRailGTFSData:
-    route_list = _route_list(routes_and_stops)
+    route_list = {}
+    for key, info in _route_list(routes_and_stops).items():
+        if (info["route"], info["bound"]) not in {(r["route"], r["bound"]) for r in route_list.values()}:
+            route_list[key] = info
     if not route_list:
         empty = pd.DataFrame()
         return LightRailGTFSData(empty, empty, empty, empty)

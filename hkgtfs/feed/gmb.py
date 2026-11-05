@@ -17,7 +17,7 @@ def build_gmb(db: Store) -> Operator:
     routes["route_id"] = "GMB-" + routes["region"] + "-" + routes["route_code"]
     routes["route_short_name"] = routes["region"] + "-" + routes["route_code"]
     routes["route_long_name"] = routes["region"] + " - " + routes["route_code"]
-    gtfs_routes = routes[["route_id", "agency_id", "route_short_name", "route_long_name", "route_type"]].copy()
+    gtfs_routes = routes[["route_id", "agency_id", "route_short_name", "route_long_name", "route_type"]].drop_duplicates(subset=["route_id"])
 
     matches = match_operator_routes_to_government_gtfs(db=db, operator_name="GMB")
     trips = []

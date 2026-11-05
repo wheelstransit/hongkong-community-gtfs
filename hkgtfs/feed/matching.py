@@ -25,7 +25,6 @@ STOP_DIFF_TOLERANCE = {
     'NLB': 15
 }
 
-
 def get_operator_route_stop_counts(db: Store, operator_name: str) -> pd.DataFrame:
     
     if operator_name == 'KMB':
@@ -67,7 +66,6 @@ def get_operator_route_stop_counts(db: Store, operator_name: str) -> pd.DataFram
             GROUP BY cr.route, cr.direction, cr.orig_en, cr.dest_en, cr.unique_route_id
         """
     elif operator_name == 'GMB':
-        # GMB has different structure - route_code is the route number, region matters!
         query = """
             SELECT 
                 gr.region || '-' || gr.route_code as route,
@@ -179,22 +177,17 @@ def find_best_matches(operator_routes: pd.DataFrame,
     }
     valid_agencies = same_agency_map.get(operator_name, [operator_name])
 
-    # Pre-group government routes by route_short_name to reduce inner scans while keeping logic identical
     gov_grouped = {k: v for k, v in gov_routes.groupby('route_short_name')}
 
     for op in operator_routes.itertuples(index=False):
         candidate_gov = gov_grouped.get(op.route, [])
         if len(candidate_gov) == 0:
             continue
-        # Iterate over subset only
         for gov in candidate_gov.itertuples(index=False):
-            # Direction enforcement for KMB
             if operator_name == 'KMB' and getattr(op, 'bound', None) != getattr(gov, 'bound', None):
                 continue
             route_long_name = str(getattr(gov, 'route_long_name', '') or '')
             route_long_name_upper = route_long_name.upper()
-            # Strip parenthetical qualifiers (e.g. "(VIA ...)") before keyword screening to avoid
-            # excluding legitimate destinations that happen to mention hospitals, schools, etc.
             sanitized = re.sub(r"\([^\)]*\)", " ", route_long_name_upper)
             sanitized = re.sub(r"\s+", " ", sanitized).strip()
             if any(keyword in sanitized for keyword in ['VIA', 'OMIT', 'SPECIAL', 'EXPRESS', 'SERVICE', 'CORRECTIONAL']):
@@ -219,14 +212,12 @@ def find_best_matches(operator_routes: pd.DataFrame,
                 'stop_diff': stop_diff,
                 'gov_route_long_name': route_long_name
             }
-            # Preserve operator routeid for NLB
             if hasattr(op, 'routeid'):
                 match_record['routeid'] = getattr(op, 'routeid')
             potential_matches.append(match_record)
     
     potential_matches.sort(key=lambda x: (x['route_key'], x['stop_diff'], x['gov_service_id']))
     
-    # Group by route_key and keep all service patterns for the best stop_diff
     best_matches_by_route = {}
     for match in potential_matches:
         route_key = match['route_key']
@@ -235,26 +226,20 @@ def find_best_matches(operator_routes: pd.DataFrame,
         elif match['stop_diff'] == best_matches_by_route[route_key][0]['stop_diff']:
             best_matches_by_route[route_key].append(match)
 
-    # Keep ALL service patterns for each route_key at the best stop_diff
     for route_key, route_matches in best_matches_by_route.items():
-        matches[route_key] = route_matches  # Keep all service patterns, not just the first
+        matches[route_key] = route_matches
 
-    # NLB specific dedupe: keep only one gov_route_id per route_key (direction)
     if operator_name == 'NLB':
         deduped = {}
         for rk, rm_list in matches.items():
-            # Group by gov_route_id
             by_route_id = {}
             for m in rm_list:
                 by_route_id.setdefault(m['gov_route_id'], []).append(m)
-            # Rank: most service patterns, then lowest avg stop_diff, then lowest gov_route_id
             ranked = sorted(by_route_id.items(), key=lambda x: (-len(x[1]), sum(mm['stop_diff'] for mm in x[1]) / len(x[1]), x[0]))
-            # Keep only top group's matches
             deduped[rk] = ranked[0][1]
         matches = deduped
 
     return matches
-
 
 def _ctb_route_id_map(route_df: pd.DataFrame) -> Dict[str, str]:
     route_df.columns = [c.strip().upper() for c in route_df.columns]
@@ -264,7 +249,6 @@ def _ctb_route_id_map(route_df: pd.DataFrame) -> Dict[str, str]:
     firsts = [df.sort_values(["ROUTE_NAMEC", "ROUTE_ID"], kind="stable").groupby("ROUTE_NAMEC", as_index=False).first()
               for df in (standard, non_standard)]
     return {str(r["ROUTE_NAMEC"]).strip(): str(r["ROUTE_ID"]).strip() for _, r in pd.concat(firsts, ignore_index=True).iterrows()}
-
 
 def match_ctb_routes_to_government_gtfs(
     db: Store,
@@ -279,7 +263,6 @@ def match_ctb_routes_to_government_gtfs(
 
     return mapping
 
-
 def match_gmb_routes_by_first_stop_location(
     db: Store,
     operator_name: str,
@@ -287,7 +270,6 @@ def match_gmb_routes_by_first_stop_location(
     max_distance_meters: float = 500.0
 ) -> Dict[str, List[Dict]]:
 
-    # Get operator routes with first stop locations for each direction
     operator_query = """
         SELECT 
             gr.region || '-' || gr.route_code as route,
@@ -306,7 +288,6 @@ def match_gmb_routes_by_first_stop_location(
     """
     
     if route_filter:
-        # Extract base route numbers from regional routes (HKI-1 -> 1)
         base_routes = [r.split('-')[-1] if '-' in r else r for r in route_filter]
         route_filter_str = "', '".join(base_routes)
         operator_query += f" AND gr.route_code IN ('{route_filter_str}')"
@@ -316,7 +297,6 @@ def match_gmb_routes_by_first_stop_location(
     if operator_routes.empty:
         return {}
 
-    # Get government GMB routes with first stop locations
     gov_query = """
         SELECT 
             gr.route_id,
@@ -346,7 +326,7 @@ def match_gmb_routes_by_first_stop_location(
         region = op_route['region']
         route_seq = int(op_route['route_seq']) if pd.notna(op_route['route_seq']) else 1
         bound = 'O' if route_seq == 1 else 'I'
-        route_key = f"{region}-{route_code}-{bound}-1"  # preserve direction now
+        route_key = f"{region}-{route_code}-{bound}-1"
         
         gov_candidates = gov_routes[gov_routes['route_short_name'] == route_code]
         
@@ -389,10 +369,8 @@ def match_operator_routes_to_government_gtfs(
         return match_ctb_routes_to_government_gtfs(db, operator_name, route_filter)
 
     if operator_name == 'GMB':
-        # Use location-based matching for GMB to handle regional routes properly
         return match_gmb_routes_by_first_stop_location(db, operator_name, route_filter)
     
-    # Get operator route stop counts
     try:
         operator_routes = get_operator_route_stop_counts(db, operator_name)
     except Exception as e:
@@ -402,26 +380,21 @@ def match_operator_routes_to_government_gtfs(
     if operator_routes.empty:
         return {}
     
-    # Filter routes if specified
     if route_filter:
         operator_routes = operator_routes[operator_routes['route'].isin(route_filter)]
     
-    # Get unique route numbers
     route_numbers = operator_routes['route'].unique().tolist()
     
-    # Get corresponding government agency IDs
     gov_agency_ids = AGENCY_MAPPING.get(operator_name, [])
     if not gov_agency_ids:
         return {}
     
-    # Get government GTFS route stop counts with service information
     try:
         gov_routes = get_government_gtfs_route_stop_counts(db, route_numbers, gov_agency_ids)
     except Exception as e:
         log.warning(f"Error getting government routes: {e}")
         return {}
     
-    # Find best matches
     stop_diff_limit = STOP_DIFF_TOLERANCE.get(operator_name, 10)
     matches = find_best_matches(
         operator_routes,

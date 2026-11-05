@@ -7,7 +7,7 @@ LANG = "zh-Hant"
 
 
 def _row(table, field, record_id, text):
-    return {"table_name": table, "field_name": field, "language": LANG, "record_id": record_id, "translation": text}
+    return {"table_name": table.removesuffix(".txt"), "field_name": field, "language": LANG, "record_id": record_id, "translation": text}
 
 
 def _stop_names(stops: Stops) -> list:
@@ -68,4 +68,6 @@ def build_translations(stops: Stops, kmb: Operator, ctb: Operator, nlb: Operator
     tc = trips[["trip_id", "trip_headsign_tc"]].dropna(subset=["trip_id"])
     tc = tc[tc["trip_headsign_tc"].astype(str).str.strip() != ""]
     rows += [_row("trips.txt", "trip_headsign", r.trip_id, r.trip_headsign_tc) for r in tc.itertuples(index=False)]
-    return pd.DataFrame(rows).drop_duplicates(subset=["table_name", "field_name", "language", "record_id"])
+    translations = pd.DataFrame(rows).drop_duplicates(subset=["table_name", "field_name", "language", "record_id"])
+    translations["translation"] = translations["translation"].astype(str).str.strip()
+    return translations

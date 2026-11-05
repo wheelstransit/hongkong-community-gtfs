@@ -198,66 +198,64 @@ def _exit_code(exit_rec: dict):
 
 def _walk_seconds(rec: dict):
     try:
-        return float(rec.get("walk_time_minutes", 0)) * 60.0
+        seconds = float(rec.get("walk_time_minutes", 0)) * 60.0
     except (TypeError, ValueError):
         return None
+    return seconds if seconds >= 1 else None
 
 
 def build_pathways(stops: Stops, crawler: dict, journeys: list, platform_journeys: list) -> pd.DataFrame:
-    rows = []
+    """Platform-exit and platform-platform walks from mtr-platform-exits-crawler, plus 60s fallbacks for missing pairs."""
     entrances = {}
-    for rec in stops.mtr_entrances.to_dict("records"):
-        stop_id = rec.get("stop_id", "")
-        if "MTR-ENTRANCE-" in stop_id:
-            station, exit_code = stop_id.split("MTR-ENTRANCE-")[1].rsplit("-", 1)
-            entrances[(_norm(station), _norm(exit_code))] = stop_id
-    names = dict(stops.mtr_stations[["station_code", "stop_name"]].values)
-    exits = crawler.get("exits") or {}
-    exit_by_amenity = {}
-    for exit_rec in exits.values():
-        exit_by_amenity.setdefault(exit_rec.get("amenity_id"), exit_rec)
-
-    for rec in journeys:
-        platform, exit_id = rec.get("platform_amenity_id"), rec.get("exit_amenity_id")
-        if not platform or not exit_id:
-            continue
-        from_id, to_id, code = stops.platform_stop_ids.get(platform), None, rec.get("station_code")
-        if code and (exit_rec := exit_by_amenity.get(exit_id)) is not None and (exit_code := _exit_code(exit_rec)):
-            to_id = entrances.get((_norm(code), _norm(exit_code)))
-            if not to_id and names.get(code):
-                to_id = entrances.get((_norm(names[code]), _norm(exit_code)))
-        if from_id and to_id:
-            rows.append({"pathway_id": f"MTR-PATH-PEX-{platform}-{exit_id}", "from_stop_id": from_id, "to_stop_id": to_id,
-                         "pathway_mode": 1, "is_bidirectional": 1, "length": rec.get("walk_distance_metres"), "traversal_time": _walk_seconds(rec)})
-
-    for rec in platform_journeys:
-        start, end = rec.get("start_platform_amenity_id"), rec.get("end_platform_amenity_id")
-        from_id, to_id = stops.platform_stop_ids.get(start), stops.platform_stop_ids.get(end)
-        if start and end and from_id and to_id:
-            rows.append({"pathway_id": f"MTR-PATH-PP-{start}-{end}", "from_stop_id": from_id, "to_stop_id": to_id,
-                         "pathway_mode": 1, "is_bidirectional": 1, "length": rec.get("walk_distance_metres"), "traversal_time": _walk_seconds(rec)})
-
-    existing = {tuple(sorted((r["from_stop_id"], r["to_stop_id"]))) for r in rows}
-    platform_ids = {code: [stops.platform_stop_ids[p["amenity_id"]] for p in platforms if stops.platform_stop_ids.get(p["amenity_id"])]
-                    for code, platforms in stops.station_to_platforms.items()}
+    for stop_id in stops.mtr_entrances["stop_id"]:
+        station, exit_code = stop_id.split("MTR-ENTRANCE-")[1].rsplit("-", 1)
+        entrances[(_norm(station), _norm(exit_code))] = stop_id
     entrance_ids = {}
     if not stops.mtr_entrances.empty:
         for code, group in stops.mtr_entrances.groupby(stops.mtr_entrances["parent_station"].str.replace("MTR-", "")):
             entrance_ids[code] = group["stop_id"].tolist()
+    platforms_by_amenity, platform_ids = {}, {}
+    for code, platforms in stops.station_to_platforms.items():
+        if code not in entrance_ids:
+            continue
+        for p in platforms:
+            platforms_by_amenity.setdefault(p["amenity_id"], []).append(p["stop_id"])
+            platform_ids.setdefault(code, []).append(p["stop_id"])
+    names = dict(stops.mtr_stations[["station_code", "stop_name"]].values)
+    exit_by_amenity = {}
+    for exit_rec in (crawler.get("exits") or {}).values():
+        exit_by_amenity.setdefault(exit_rec.get("amenity_id"), exit_rec)
+
+    rows = {}
+
+    def add(kind, from_id, to_id, **values):
+        if from_id != to_id:
+            rows.setdefault(f"{kind}-{from_id}-{to_id}", {"from_stop_id": from_id, "to_stop_id": to_id, "pathway_mode": 1, "is_bidirectional": 1, **values})
+
+    for rec in journeys:
+        code, exit_rec = rec.get("station_code"), exit_by_amenity.get(rec.get("exit_amenity_id"))
+        exit_code = _exit_code(exit_rec) if code and exit_rec is not None else None
+        to_id = exit_code and (entrances.get((_norm(code), _norm(exit_code))) or entrances.get((_norm(names.get(code)), _norm(exit_code))))
+        if to_id:
+            for from_id in platforms_by_amenity.get(rec.get("platform_amenity_id"), []):
+                add("MTR-PATH-PEX", from_id, to_id, length=rec.get("walk_distance_metres"), traversal_time=_walk_seconds(rec))
+    for rec in platform_journeys:
+        for from_id in platforms_by_amenity.get(rec.get("start_platform_amenity_id"), []):
+            for to_id in platforms_by_amenity.get(rec.get("end_platform_amenity_id"), []):
+                add("MTR-PATH-PP", from_id, to_id, length=rec.get("walk_distance_metres"), traversal_time=_walk_seconds(rec))
+
+    existing = {tuple(sorted((r["from_stop_id"], r["to_stop_id"]))) for r in rows.values()}
     for code, pids in platform_ids.items():
         for pid in pids:
-            for eid in entrance_ids.get(code, []):
+            for eid in entrance_ids[code]:
                 if tuple(sorted((pid, eid))) not in existing:
-                    rows.append({"pathway_id": f"DUMMY-PEX-{pid}-{eid}", "from_stop_id": pid, "to_stop_id": eid,
-                                 "pathway_mode": 1, "is_bidirectional": 1, "traversal_time": 60})
-    for code, pids in platform_ids.items():
+                    add("DUMMY-PEX", pid, eid, traversal_time=60)
         for a, b in combinations(pids, 2):
             if tuple(sorted((a, b))) not in existing:
-                rows.append({"pathway_id": f"DUMMY-PP-{a}-{b}", "from_stop_id": a, "to_stop_id": b,
-                             "pathway_mode": 1, "is_bidirectional": 1, "traversal_time": 60})
+                add("DUMMY-PP", a, b, traversal_time=60)
     if not rows:
         return pd.DataFrame()
-    pathways = pd.DataFrame(rows)
+    pathways = pd.DataFrame([{"pathway_id": key, **row} for key, row in rows.items()])
     for col in ("length", "traversal_time"):
         pathways[col] = pd.to_numeric(pathways[col], errors="coerce").round().astype("Int64")
     return pathways[["pathway_id", "from_stop_id", "to_stop_id", "pathway_mode", "is_bidirectional", "length", "traversal_time"]]
