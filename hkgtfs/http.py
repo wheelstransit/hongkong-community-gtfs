@@ -9,7 +9,7 @@ from urllib3.util.retry import Retry
 session = requests.Session()
 session.mount("https://", HTTPAdapter(
     pool_maxsize=32,
-    max_retries=Retry(total=6, backoff_factor=2, status_forcelist=(403, 429, 500, 502, 503, 504)),
+    max_retries=Retry(total=10, backoff_factor=5, status_forcelist=(403, 429, 500, 502, 503, 504)),
 ))
 
 
