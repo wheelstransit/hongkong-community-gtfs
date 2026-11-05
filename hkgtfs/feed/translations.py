@@ -50,7 +50,7 @@ def _route_names(kmb: Operator, ctb: Operator, nlb: Operator, mtr_routes: pd.Dat
     try:
         names = {}
         for line, grp in mtr_stations.groupby("Line Code"):
-            ordered = grp.sort_values("Sequence", key=lambda s: s.astype(int) if s.dtype == object else s)
+            ordered = grp.assign(_seq=pd.to_numeric(grp["Sequence"], errors="coerce")).sort_values("_seq", kind="stable")
             if not ordered.empty:
                 names[line] = f"{ordered.iloc[0]['Chinese Name']} - {ordered.iloc[-1]['Chinese Name'] if len(ordered) > 1 else ordered.iloc[0]['Chinese Name']}"
         rows += [_row("routes.txt", "route_long_name", r.route_id, names.get(r.route_short_name, r.route_long_name)) for r in mtr_routes.itertuples()]

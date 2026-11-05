@@ -18,6 +18,11 @@ def build_gmb(db: Store) -> Operator:
     routes["route_short_name"] = routes["region"] + "-" + routes["route_code"]
     routes["route_long_name"] = routes["region"] + " - " + routes["route_code"]
     gtfs_routes = routes[["route_id", "agency_id", "route_short_name", "route_long_name", "route_type"]].drop_duplicates(subset=["route_id"])
+    if "orig_en_primary" in routes.columns:
+        ends = routes.drop_duplicates(subset=["route_id"]).set_index("route_id")[["orig_en_primary", "dest_en_primary"]]
+        named = ends["orig_en_primary"].fillna("").str.strip().ne("") & ends["dest_en_primary"].fillna("").str.strip().ne("")
+        names = (ends["orig_en_primary"].str.strip() + " - " + ends["dest_en_primary"].str.strip())[named]
+        gtfs_routes["route_long_name"] = gtfs_routes["route_id"].map(names).fillna(gtfs_routes["route_long_name"])
 
     matches = match_operator_routes_to_government_gtfs(db=db, operator_name="GMB")
     trips = []

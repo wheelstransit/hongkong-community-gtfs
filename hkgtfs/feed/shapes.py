@@ -5,6 +5,9 @@ import shutil
 import tempfile
 from math import radians, sin, cos, sqrt, atan2
 from concurrent.futures import ProcessPoolExecutor
+
+from pyproj import Transformer
+from shapely import MultiLineString, Point
 import logging
 
 log = logging.getLogger(__name__)
@@ -158,3 +161,34 @@ def _is_inverted(route, bound, agency_id, db, shape_ends) -> bool:
     aligned = lat_long_dist(first["stop_lat"], first["stop_lng"], start_lat, start_lng) + lat_long_dist(last["stop_lat"], last["stop_lng"], end_lat, end_lng)
     inverted = lat_long_dist(first["stop_lat"], first["stop_lng"], end_lat, end_lng) + lat_long_dist(last["stop_lat"], last["stop_lng"], start_lat, start_lng)
     return inverted < aligned - 500
+
+
+MAX_STOP_OFFSET_M = 100
+_to_hk1980 = Transformer.from_crs("EPSG:4326", "EPSG:2326", always_xy=True)
+
+
+def _misfits(args):
+    path, trips = args
+    with open(path, encoding="utf-8") as f:
+        geometry = json.load(f)["features"][0]["geometry"]
+    lines = geometry["coordinates"] if geometry["type"] == "MultiLineString" else [geometry["coordinates"]]
+    shape = MultiLineString([[_to_hk1980.transform(lon, lat) for lon, lat in line] for line in lines if len(line) > 1])
+    return [trip for trip, stops in trips.items()
+            if any(shape.distance(Point(_to_hk1980.transform(lon, lat))) > MAX_STOP_OFFSET_M for lat, lon in stops)]
+
+
+def drop_misfitting_shapes(trips_df, stop_times, stops, waypoints_dir):
+    """Unset CSDI shapes that pass more than 100 m from one of the trip's stops, so pfaedle map-matches those trips."""
+    coords = stops.set_index("stop_id")[["stop_lat", "stop_lon"]]
+    with_shape = trips_df.loc[trips_df["shape_id"].notna(), ["trip_id", "shape_id"]]
+    points = stop_times[stop_times["trip_id"].isin(with_shape["trip_id"])].join(coords, on="stop_id")
+    by_trip = {t: list(zip(g["stop_lat"], g["stop_lon"])) for t, g in points.groupby("trip_id")}
+    jobs = {}
+    for trip, shape_id in with_shape.itertuples(index=False):
+        jobs.setdefault(shape_id, {})[trip] = by_trip.get(trip, [])
+    args = [(os.path.join(waypoints_dir, shape_id.removeprefix("CSDI-") + ".json"), t) for shape_id, t in jobs.items()]
+    with ProcessPoolExecutor() as pool:
+        bad = {trip for result in pool.map(_misfits, args, chunksize=16) for trip in result}
+    trips_df.loc[trips_df["trip_id"].isin(bad), "shape_id"] = None
+    log.info("%d trips had a shape too far from their stops; left for pfaedle", len(bad))
+    return trips_df

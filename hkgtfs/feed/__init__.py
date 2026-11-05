@@ -20,9 +20,10 @@ from .light_rail import build_light_rail_gtfs_data
 from .mtr import build_mtr, build_pathways, rail_frequencies
 from .mtr_bus import build_mtr_bus
 from .nlb import build_nlb
-from .shapes import generate_shapes_from_csdi_files, match_trips_to_csdi_shapes
+from .shapes import drop_misfitting_shapes, generate_shapes_from_csdi_files, match_trips_to_csdi_shapes
 from .stop_times import generate_stop_times
 from .stops import build_stops
+from .text import fix_shouting
 from .translations import build_translations
 
 log = logging.getLogger(__name__)
@@ -97,10 +98,11 @@ def build_feed(db: Store, raw: dict, out: Path, waypoints: Path, version: str):
 
     buses = {"KMB": kmb, "CTB": ctb, "GMB": gmb, "MTRB": mtrb, "NLB": nlb}
     bus_stop_times = []
+    coords = dict(zip(stops.table["stop_id"], zip(stops.table["stop_lat"], stops.table["stop_lon"])))
     for agency, op in buses.items():
         op.trips["original_service_id"] = op.trips["original_service_id"].astype(str)
         op.trips["route_short_name"] = op.trips["route_short_name"].astype(str)
-        bus_stop_times.append(generate_stop_times(agency, op.trips, op.patterns, raw["journey_time"]))
+        bus_stop_times.append(generate_stop_times(agency, op.trips, op.patterns, raw["journey_time"], coords))
 
     routes = _routes([*(op.routes for op in buses.values()), ferry.routes, rail.routes, lr_routes], lr_routes)
     trips = pd.concat([*(op.trips for op in buses.values()), ferry.trips, rail.trips, lr_trips], ignore_index=True)
@@ -119,6 +121,7 @@ def build_feed(db: Store, raw: dict, out: Path, waypoints: Path, version: str):
 
     shape_info, shape_ends = generate_shapes_from_csdi_files(gtfs / "shapes.txt", db, waypoints)
     trips = match_trips_to_csdi_shapes(trips, shape_info, db, waypoints, shape_ends)
+    trips = drop_misfitting_shapes(trips, stop_times, stops.table, waypoints)
     trips = generate_trip_headsigns(db, trips)
     trips["trip_headsign_tc"] = generate_trip_headsigns_tc(db, trips, english_headsigns=trips.get("trip_headsign"))
     for col in TRIP_COLUMNS:
@@ -135,6 +138,15 @@ def build_feed(db: Store, raw: dict, out: Path, waypoints: Path, version: str):
 
     counts = stop_times["trip_id"].value_counts()
     runnable = set(counts[counts >= 2].index)
+    served = set(stop_times.loc[stop_times["trip_id"].isin(runnable), "stop_id"])
+    stop_table = stops.table[(stops.table["location_type"] != 0) | stops.table["stop_id"].isin(served)
+                             | ~stops.table["stop_id"].str.startswith("MTR-PLATFORM-")].copy()
+    if not pathways.empty:
+        kept = set(stop_table["stop_id"])
+        pathways = pathways[pathways["from_stop_id"].isin(kept) & pathways["to_stop_id"].isin(kept)]
+    stop_table["stop_name"] = stop_table["stop_name"].map(fix_shouting)
+    routes["route_long_name"] = routes["route_long_name"].map(fix_shouting)
+    trips["trip_headsign"] = trips["trip_headsign"].map(fix_shouting)
     trips = trips[trips["trip_id"].isin(runnable)]
     stop_times = stop_times[stop_times["trip_id"].isin(runnable)]
     frequencies = frequencies[frequencies["trip_id"].isin(runnable)]
@@ -145,7 +157,7 @@ def build_feed(db: Store, raw: dict, out: Path, waypoints: Path, version: str):
     tables = {
         "agency.txt": build_agency(),
         "feed_info.txt": build_feed_info(version, calendar),
-        "stops.txt": stops.table,
+        "stops.txt": stop_table,
         "routes.txt": routes,
         "trips.txt": trips[TRIP_COLUMNS],
         "stop_times.txt": stop_times,

@@ -1,3 +1,5 @@
+import re
+
 def smart_title_case(text):
     if not isinstance(text, str) or not text:
         return text
@@ -63,3 +65,23 @@ def smart_title_case(text):
                 is_first_word = False
     
     return ' '.join(result_parts)
+
+
+_SMALL = {"OF", "THE", "AND", "AT", "IN", "ON", "TO", "FOR", "BY", "VIA", "NEAR"}
+_ACRONYMS = {"MTR", "KMB", "CTB", "GMB", "NLB", "LR", "HK", "HKU", "HKUST", "CUHK", "YMCA", "YWCA", "HSBC", "IFC", "ICC",
+             "BBI", "EKCC", "GTC", "PTI", "II", "III", "IV", "HKI", "KLN", "NT"}
+
+
+def fix_shouting(text):
+    """Title-case all-caps words in shouted text, keeping acronyms and codes such as MTR, 400KV or 27MS."""
+    if not isinstance(text, str):
+        return text
+    words = " ".join(w for w in re.findall(r"\S+", text) if not any(c.isdigit() for c in w))
+    if re.search(r"[a-z]", words) and not re.search(r"[A-Z]{4,}", words):
+        return text
+    def word(m):
+        w = m.group(0)
+        if not w.isupper() or w in _ACRONYMS or any(c.isdigit() for c in text[m.end():m.end() + 1] + text[m.start() - 1:m.start()]):
+            return w
+        return w.lower() if w in _SMALL and m.start() > 0 else w.capitalize()
+    return re.sub(r"[A-Za-z]+(?:'[A-Za-z]+)*", word, text)

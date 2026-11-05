@@ -1,9 +1,11 @@
 import numpy as np
 import pandas as pd
 
+from .shapes import lat_long_dist
 from .times import format_timedelta
 
 DEFAULT_SEGMENT_SECS = 120
+MAX_BUS_SPEED = 100 / 3.6
 COLUMNS = ["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"]
 PATTERN_KEYS = {
     "KMB": ["route", "bound", "service_type"],
@@ -33,8 +35,8 @@ def _trip_key(agency_id: str, trip):
     return trip.trip_id
 
 
-def generate_stop_times(agency_id: str, trips: pd.DataFrame, patterns: pd.DataFrame, journey_time: dict) -> pd.DataFrame:
-    """Expand each trip's stop pattern into stop_times, timing segments with hk-bus-time-between-stops."""
+def generate_stop_times(agency_id: str, trips: pd.DataFrame, patterns: pd.DataFrame, journey_time: dict, coords: dict) -> pd.DataFrame:
+    """Expand each trip's stop pattern into stop_times, timing segments with hk-bus-time-between-stops (capped at 100 km/h)."""
     if trips.empty or patterns.empty:
         return pd.DataFrame(columns=COLUMNS)
     seq_col = next((c for c in ("sequence", "seq", "station_seqno", "stop_sequence") if c in patterns.columns), None)
@@ -57,9 +59,12 @@ def generate_stop_times(agency_id: str, trips: pd.DataFrame, patterns: pd.DataFr
         for prev, stop in zip(stops, stops[1:]):
             seconds = (journey_time.get(_unprefixed(prev)) or {}).get(_unprefixed(stop))
             try:
-                offsets.append(int(seconds if seconds is not None else DEFAULT_SEGMENT_SECS))
+                seconds = int(seconds if seconds is not None else DEFAULT_SEGMENT_SECS)
             except (ValueError, TypeError):
-                offsets.append(DEFAULT_SEGMENT_SECS)
+                seconds = DEFAULT_SEGMENT_SECS
+            if prev in coords and stop in coords:
+                seconds = max(seconds, int(-(-lat_long_dist(*coords[prev], *coords[stop]) // MAX_BUS_SPEED)))
+            offsets.append(seconds)
         times = [format_timedelta(t) for t in pd.to_timedelta(np.cumsum(offsets), unit="s")]
         timed[name] = (stops, group[seq_col].tolist(), times)
 
