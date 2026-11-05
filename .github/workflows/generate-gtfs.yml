@@ -63,12 +63,16 @@ jobs:
 
       - name: Validate
         run: |
-          java -Xmx12g -jar validator.jar -i hk.gtfs.zip -o validation -c hk
+          for feed in hk hk-drop-shapes; do
+            java -Xmx12g -jar validator.jar -i "$feed.gtfs.zip" -o "validation/$feed" -c hk
+          done
           python3 -c "
           import json, sys
-          notices = json.load(open('validation/report.json'))['notices']
-          errors = [n for n in notices if n['severity'] == 'ERROR']
-          for n in notices: print(n['severity'], n['code'], n['totalNotices'])
+          errors = 0
+          for feed in ('hk', 'hk-drop-shapes'):
+              for n in json.load(open(f'validation/{feed}/report.json'))['notices']:
+                  print(feed, n['severity'], n['code'], n['totalNotices'])
+                  errors += n['severity'] == 'ERROR'
           sys.exit(1 if errors else 0)"
 
       - uses: actions/upload-artifact@v4

@@ -6,7 +6,7 @@ import logging
 log = logging.getLogger(__name__)
 
 def _process_special_fares_for_trip(args):
-    """Helper function to detect special fares for a single trip - must be at module level for pickling."""
+    """Special fare rules for one trip from its stop-pair fare matrix."""
     trip_id, trip_fares_data, trip_stops_map = args
     
     special_rules = []

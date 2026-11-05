@@ -34,7 +34,7 @@ python -m hkgtfs --refresh kmb,mtr    # re-fetch some sources; --refresh all for
 
 Raw data is cached per source in `.cache/`. Green minibus data is fetched incrementally using the API's last-update timestamps, so only the first fetch is slow.
 
-`scripts/postprocess.sh` turns `output/hk.gtfs.zip` into the published feeds (needs `gtfstidy`, `osmium` and Docker for pfaedle).
+`scripts/postprocess.sh` turns `output/hk.gtfs.zip` into the published feeds (needs `gtfstidy`, `osmium` and pfaedle, or Docker to run pfaedle).
 
 | Path | What |
 | --- | --- |
